@@ -142,9 +142,9 @@ app.get('/articles/:slug', async (req, res) => {
   res.json(data);
 });
 
-// ---------- Furni 3D (Nitro) ----------
-// Dados de render (assets/frames/visualizations) — JSON pro cliente compor
+// ---------- Furni 3D (Nitro) ---------- (CORS aberto: dados publicos)
 app.get('/furni/:cls/data', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
   const f = await getFurni(req.params.cls);
   if (!f || !f.ok) return res.status(404).json({ ok: false });
   res.set('Cache-Control', 'public, max-age=86400');
@@ -153,6 +153,7 @@ app.get('/furni/:cls/data', async (req, res) => {
 
 // Spritesheet PNG extraído do .nitro
 app.get('/furni/:cls/sheet.png', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
   const f = await getFurni(req.params.cls);
   if (!f || !f.ok) return res.status(404).end();
   res.set('Content-Type', 'image/png');
@@ -162,9 +163,17 @@ app.get('/furni/:cls/sheet.png', async (req, res) => {
 
 // Existe modelo 3D pra este classname?
 app.get('/furni/:cls/check', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
   const f = await getFurni(req.params.cls);
-  res.json({ ok: !!(f && f.ok) });
+  res.json({ ok: !!(f && f.ok), dirs: f?.ok ? furniDirs(f.json) : [] });
 });
+
+function furniDirs(json) {
+  try {
+    const v = json.visualizations.find(v => v.size === 64) || json.visualizations[0];
+    return Object.keys(v.directions || { 0: {} }).map(Number).sort((a, b) => a - b);
+  } catch { return [0]; }
+}
 
 // Quem esta online agora (presenca via sockets)
 let onlineCount = 0;
@@ -249,13 +258,33 @@ io.on('connection', async (socket) => {
       user_id: profile.id, furniture_id, x, y, rotation,
     }).select('id, furniture_id, x, y, rotation, furniture(sprite, width, height, name)').single();
 
+    // baixa 1 do inventario (some da mochila, vai pro quarto)
+    if (inv.qty > 1) await db.from('inventory').update({ qty: inv.qty - 1 }).eq('user_id', profile.id).eq('furniture_id', furniture_id);
+    else await db.from('inventory').delete().eq('user_id', profile.id).eq('furniture_id', furniture_id);
+
     io.in(profile.github_login).emit('room:placed', item);
+    socket.emit('inventory:changed');
   });
 
-  socket.on('room:remove', async ({ id }) => {
+  // girar mobi (muda a direcao/rotacao)
+  socket.on('room:rotate', async ({ id, rotation }) => {
     if (socket.data.room !== profile.github_login) return;
+    const r = ((Number(rotation) % 360) + 360) % 360;
+    await db.from('room_items').update({ rotation: r }).eq('id', id).eq('user_id', profile.id);
+    io.in(profile.github_login).emit('room:rotated', { id, rotation: r });
+  });
+
+  // guardar mobi de volta na mochila
+  socket.on('room:pickup', async ({ id }) => {
+    if (socket.data.room !== profile.github_login) return;
+    const { data: it } = await db.from('room_items').select('furniture_id').eq('id', id).eq('user_id', profile.id).single();
+    if (!it) return;
     await db.from('room_items').delete().eq('id', id).eq('user_id', profile.id);
+    const { data: inv } = await db.from('inventory').select('qty').eq('user_id', profile.id).eq('furniture_id', it.furniture_id).single();
+    if (inv) await db.from('inventory').update({ qty: inv.qty + 1 }).eq('user_id', profile.id).eq('furniture_id', it.furniture_id);
+    else await db.from('inventory').insert({ user_id: profile.id, furniture_id: it.furniture_id, qty: 1 });
     io.in(profile.github_login).emit('room:removed', { id });
+    socket.emit('inventory:changed');
   });
 
   socket.on('disconnect', () => {

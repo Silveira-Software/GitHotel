@@ -178,7 +178,8 @@ function HotelView({ me, setMe, showToast }) {
         </div>
         <div style={{ padding: 12 }}>
           <IsoRoom roomLogin={roomLogin} me={me.github_login} myLook={me.look} canEdit={isOwn}
-            placingItem={isOwn ? placing : null} onPlaced={() => { setPlacing(null); showToast('Mobi posicionado! 🪑'); }} />
+            placingItem={isOwn ? placing : null} onInventoryChange={loadInv}
+            onPlaced={() => { setPlacing(null); showToast('Mobi posicionado! 🪑'); loadInv(); }} />
         </div>
       </div>
 

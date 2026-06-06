@@ -32,6 +32,13 @@ async function getOrCreateProfile(user) {
 
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'githotel-api' }));
 
+// Estado publico do hotel (manutencao, nome) — usado pelo app e landing
+app.get('/status', async (_req, res) => {
+  const { data } = await db.from('settings').select('key, value').in('key', ['maintenance', 'hotel']);
+  const map = Object.fromEntries((data || []).map(r => [r.key, r.value]));
+  res.json({ maintenance: map.maintenance || { on: false }, hotel: map.hotel || { name: 'GitHotel' } });
+});
+
 app.get('/me', authMiddleware, async (req, res) => {
   const profile = await getOrCreateProfile(req.user);
   res.json({ ...profile, look: profile.look || DEFAULT_LOOK });
@@ -100,7 +107,7 @@ app.get('/inventory', authMiddleware, async (req, res) => {
 
 app.get('/room/:login', async (req, res) => {
   const { data: owner } = await db.from('profiles')
-    .select('id, github_login, avatar_url, coins, look')
+    .select('id, github_login, avatar_url, coins, look, room_floor, room_wall')
     .eq('github_login', req.params.login).single();
   if (!owner) return res.status(404).json({ error: 'not_found' });
   const { data: items } = await db.from('room_items')
@@ -152,8 +159,10 @@ io.use(async (socket, next) => {
 
 io.on('connection', async (socket) => {
   const profile = await getOrCreateProfile(socket.user);
+  if (profile.banned) { socket.emit('banned'); return socket.disconnect(true); }
   socket.data.login = profile.github_login;
   socket.data.look = profile.look || DEFAULT_LOOK;
+  socket.data.dir = 2;
   onlineCount++;
   io.emit('hotel:online', { online: onlineCount });
 
@@ -165,17 +174,38 @@ io.on('connection', async (socket) => {
     const sockets = await io.in(roomLogin).fetchSockets();
     const players = sockets.map((s) => ({
       login: s.data.login, look: s.data.look, x: s.data.x ?? 5, y: s.data.y ?? 5,
+      dir: s.data.dir ?? 2, dance: s.data.dance || 0,
     }));
     socket.emit('room:players', players);
     socket.to(roomLogin).emit('player:enter', {
-      login: profile.github_login, look: socket.data.look, x: 5, y: 5,
+      login: profile.github_login, look: socket.data.look, x: 5, y: 5, dir: 2, dance: 0,
     });
   });
 
-  socket.on('player:move', ({ x, y }) => {
+  // movimento: alvo + direcao (cliente faz o tween de andar)
+  socket.on('player:move', ({ x, y, dir }) => {
     socket.data.x = x; socket.data.y = y;
+    if (dir != null) socket.data.dir = dir;
     if (socket.data.room)
-      socket.to(socket.data.room).emit('player:move', { login: profile.github_login, x, y });
+      socket.to(socket.data.room).emit('player:move', { login: profile.github_login, x, y, dir: socket.data.dir });
+  });
+
+  // dança / gesto
+  socket.on('player:dance', ({ dance }) => {
+    socket.data.dance = Number(dance) || 0;
+    if (socket.data.room)
+      socket.to(socket.data.room).emit('player:dance', { login: profile.github_login, dance: socket.data.dance });
+  });
+
+  // editor de piso/parede (só o dono do quarto)
+  socket.on('room:decor', async ({ floor, wall }) => {
+    if (socket.data.room !== profile.github_login) return;
+    const patch = {};
+    if (floor) patch.room_floor = String(floor).slice(0, 40);
+    if (wall) patch.room_wall = String(wall).slice(0, 40);
+    if (!Object.keys(patch).length) return;
+    await db.from('profiles').update(patch).eq('id', profile.id);
+    io.in(profile.github_login).emit('room:decor', patch);
   });
 
   socket.on('chat:msg', ({ text }) => {

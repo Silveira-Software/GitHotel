@@ -1,45 +1,91 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { API, getToken } from '../lib/client';
 
-const TILE_W = 64, TILE_H = 32, GRID = 11;
-const AVATAR = (look) =>
-  `https://www.habbo.com/habbo-imaging/avatarimage?figure=${encodeURIComponent(look)}&size=l&direction=2&head_direction=3&gesture=std`;
+const TILE_W = 64, TILE_H = 32, GRID = 11, WALL_H = 110;
 
-function toScreen(gx, gy, ox, oy) {
-  return { sx: ox + (gx - gy) * (TILE_W / 2), sy: oy + (gx + gy) * (TILE_H / 2) };
+// materiais (estilo Habbo) — id -> cores
+export const FLOORS = {
+  floor_wood:  { a: '#c8a473', b: '#bb9560', name: 'Madeira' },
+  floor_blue:  { a: '#2f6f9e', b: '#2a6390', name: 'Azul' },
+  floor_grass: { a: '#5aa641', b: '#4f9638', name: 'Grama' },
+  floor_dark:  { a: '#27506f', b: '#21465f', name: 'Escuro' },
+  floor_pink:  { a: '#d98ab0', b: '#cc7da3', name: 'Rosa' },
+  floor_sand:  { a: '#e0c98a', b: '#d4bc7d', name: 'Areia' },
+  floor_red:   { a: '#b34a3f', b: '#a23f35', name: 'Vermelho' },
+  floor_white: { a: '#e8eef4', b: '#d8e0e8', name: 'Branco' },
+};
+export const WALLS = {
+  wall_blue:  { c: '#5b7fa6', d: '#4a6c90', name: 'Azul' },
+  wall_gray:  { c: '#8a93a0', d: '#767f8c', name: 'Cinza' },
+  wall_warm:  { c: '#b9a07e', d: '#a48b6a', name: 'Bege' },
+  wall_dark:  { c: '#34495e', d: '#2a3b4d', name: 'Escuro' },
+  wall_green: { c: '#5a8a6a', d: '#4c7659', name: 'Verde' },
+  wall_pink:  { c: '#c98aa6', d: '#b87a95', name: 'Rosa' },
+};
+
+const AV = (look, { dir = 2, action = 'std', dance = 0, gif = false } = {}) => {
+  let a = action;
+  if (dance > 0) a = 'dance';
+  const params = [
+    `figure=${encodeURIComponent(look)}`, `size=l`,
+    `direction=${dir}`, `head_direction=${dir}`,
+    `action=${a}`, dance > 0 ? `dance=${dance}` : '', `gesture=std`,
+    gif ? `img_format=gif` : '',
+  ].filter(Boolean).join('&');
+  return `https://www.habbo.com/habbo-imaging/avatarimage?${params}`;
+};
+
+function toScreen(gx, gy) {
+  return { sx: (gx - gy) * (TILE_W / 2), sy: (gx + gy) * (TILE_H / 2) };
 }
-function toTile(mx, my, ox, oy) {
-  const dx = mx - ox, dy = my - oy;
-  const gx = Math.round((dx / (TILE_W / 2) + dy / (TILE_H / 2)) / 2);
-  const gy = Math.round((dy / (TILE_H / 2) - dx / (TILE_W / 2)) / 2);
-  return { gx, gy };
+function dirFrom(dx, dy) {
+  if (dx > 0 && dy > 0) return 4;
+  if (dx > 0 && dy === 0) return 3;
+  if (dx === 0 && dy > 0) return 5;
+  if (dx < 0 && dy < 0) return 0;
+  if (dx < 0 && dy === 0) return 7;
+  if (dx === 0 && dy < 0) return 1;
+  if (dx > 0 && dy < 0) return 2;
+  if (dx < 0 && dy > 0) return 6;
+  return 4;
 }
 
-// cache global de imagens
 const imgCache = {};
 function getImg(url) {
   if (!url) return null;
   if (imgCache[url]) return imgCache[url];
-  const im = new Image();
-  im.crossOrigin = 'anonymous';
-  im.src = url;
-  imgCache[url] = im;
+  const im = new Image(); im.crossOrigin = 'anonymous'; im.src = url; imgCache[url] = im;
   return im;
 }
 
-export default function IsoRoom({ roomLogin, placingItem, onPlaced, me, myLook }) {
+export default function IsoRoom({ roomLogin, placingItem, onPlaced, me, myLook, canEdit }) {
   const canvasRef = useRef(null);
   const sockRef = useRef(null);
+  const wrapRef = useRef(null);
   const [items, setItems] = useState([]);
   const [players, setPlayers] = useState({});
   const [chat, setChat] = useState([]);
+  const [floor, setFloor] = useState('floor_wood');
+  const [wall, setWall] = useState('wall_blue');
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [editor, setEditor] = useState(false);
+  const [myDance, setMyDance] = useState(0);
+  const walkTimer = useRef(null);
+  const myPos = useRef({ x: 5, y: 5, dir: 4 });
+  const ORIGIN = { x: 380, y: 60 }; // centro logico do piso
 
+  // ----- carrega quarto -----
   useEffect(() => {
-    fetch(`${API}/room/${roomLogin}`).then(r => r.json())
-      .then(d => setItems(d.items || []));
+    fetch(`${API}/room/${roomLogin}`).then(r => r.json()).then(d => {
+      setItems(d.items || []);
+      if (d.owner?.room_floor) setFloor(d.owner.room_floor);
+      if (d.owner?.room_wall) setWall(d.owner.room_wall);
+    });
   }, [roomLogin]);
 
+  // ----- socket -----
   useEffect(() => {
     let sock;
     (async () => {
@@ -48,123 +94,232 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, me, myLook }
       sockRef.current = sock;
       sock.on('connect', () => sock.emit('room:join', roomLogin));
       sock.on('room:players', (list) => {
-        const m = {}; list.forEach(p => { m[p.login] = p; }); setPlayers(m);
+        const m = {}; list.forEach(p => { m[p.login] = { ...p, walking: false }; }); setPlayers(m);
       });
-      sock.on('player:enter', (p) => setPlayers(s => ({ ...s, [p.login]: p })));
-      sock.on('player:move', (p) => setPlayers(s => ({ ...s, [p.login]: { ...s[p.login], ...p } })));
+      sock.on('player:enter', (p) => setPlayers(s => ({ ...s, [p.login]: { ...p, walking: false } })));
+      sock.on('player:move', (p) => setPlayers(s => {
+        const prev = s[p.login] || {};
+        return { ...s, [p.login]: { ...prev, x: p.x, y: p.y, dir: p.dir ?? prev.dir, walking: true } };
+      }));
+      sock.on('player:dance', (p) => setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), dance: p.dance } })));
       sock.on('player:leave', (p) => setPlayers(s => { const c = { ...s }; delete c[p.login]; return c; }));
       sock.on('room:placed', (it) => setItems(s => [...s, it]));
       sock.on('room:removed', ({ id }) => setItems(s => s.filter(i => i.id !== id)));
+      sock.on('room:decor', (d) => { if (d.room_floor) setFloor(d.room_floor); if (d.room_wall) setWall(d.room_wall); });
       sock.on('chat:msg', (m) => setChat(s => [...s.slice(-40), m]));
     })();
     return () => sock && sock.disconnect();
   }, [roomLogin]);
 
+  // ----- desenha piso + paredes + mobis no canvas -----
   useEffect(() => {
     const cv = canvasRef.current; if (!cv) return;
     const ctx = cv.getContext('2d');
-    const ox = cv.width / 2, oy = 70;
+    const F = FLOORS[floor] || FLOORS.floor_wood;
+    const W = WALLS[wall] || WALLS.wall_blue;
+    const ox = ORIGIN.x, oy = ORIGIN.y;
     let raf;
     const draw = () => {
       ctx.clearRect(0, 0, cv.width, cv.height);
-      // piso isometrico
-      for (let gx = 0; gx < GRID; gx++) for (let gy = 0; gy < GRID; gy++) {
-        const { sx, sy } = toScreen(gx, gy, ox, oy);
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + TILE_W / 2, sy + TILE_H / 2);
-        ctx.lineTo(sx, sy + TILE_H);
-        ctx.lineTo(sx - TILE_W / 2, sy + TILE_H / 2);
-        ctx.closePath();
-        ctx.fillStyle = (gx + gy) % 2 ? '#27506f' : '#21465f';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.stroke();
-      }
-      // borda do piso (parede sutil)
-      const c0 = toScreen(0, 0, ox, oy);
-      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 2;
+      // paredes (2 planos no fundo)
+      const p00 = toScreen(0, 0), pN0 = toScreen(GRID, 0), p0N = toScreen(0, GRID);
+      // parede direita (borda gy=0)
+      ctx.fillStyle = W.c;
       ctx.beginPath();
-      ctx.moveTo(c0.sx, c0.sy);
-      const cN = toScreen(GRID, 0, ox, oy), cE = toScreen(0, GRID, ox, oy);
-      ctx.lineTo(cN.sx, cN.sy); ctx.moveTo(c0.sx, c0.sy); ctx.lineTo(cE.sx, cE.sy);
+      ctx.moveTo(ox + p00.sx, oy + p00.sy - WALL_H);
+      ctx.lineTo(ox + pN0.sx, oy + pN0.sy - WALL_H);
+      ctx.lineTo(ox + pN0.sx, oy + pN0.sy);
+      ctx.lineTo(ox + p00.sx, oy + p00.sy);
+      ctx.closePath(); ctx.fill();
+      // parede esquerda (borda gx=0)
+      ctx.fillStyle = W.d;
+      ctx.beginPath();
+      ctx.moveTo(ox + p00.sx, oy + p00.sy - WALL_H);
+      ctx.lineTo(ox + p0N.sx, oy + p0N.sy - WALL_H);
+      ctx.lineTo(ox + p0N.sx, oy + p0N.sy);
+      ctx.lineTo(ox + p00.sx, oy + p00.sy);
+      ctx.closePath(); ctx.fill();
+      // topo das paredes (borda clara)
+      ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ox + pN0.sx, oy + pN0.sy - WALL_H);
+      ctx.lineTo(ox + p00.sx, oy + p00.sy - WALL_H);
+      ctx.lineTo(ox + p0N.sx, oy + p0N.sy - WALL_H);
       ctx.stroke(); ctx.lineWidth = 1;
 
-      // entidades (mobis + players) ordenadas por profundidade
-      const ents = [];
-      for (const it of items) ents.push({ kind: 'furni', x: it.x, y: it.y, it });
-      Object.values(players).forEach(p => ents.push({ kind: 'player', x: p.x ?? 5, y: p.y ?? 5, p }));
-      ents.sort((a, b) => (a.x + a.y) - (b.x + b.y));
+      // piso
+      for (let gx = 0; gx < GRID; gx++) for (let gy = 0; gy < GRID; gy++) {
+        const { sx, sy } = toScreen(gx, gy);
+        const x = ox + sx, y = oy + sy;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + TILE_W / 2, y + TILE_H / 2);
+        ctx.lineTo(x, y + TILE_H);
+        ctx.lineTo(x - TILE_W / 2, y + TILE_H / 2);
+        ctx.closePath();
+        ctx.fillStyle = (gx + gy) % 2 ? F.a : F.b;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.stroke();
+      }
 
-      for (const e of ents) {
-        const { sx, sy } = toScreen(e.x, e.y, ox, oy);
-        if (e.kind === 'furni') {
-          const url = e.it.furniture?.sprite;
-          const im = getImg(url);
-          if (im && im.complete && im.naturalWidth) {
-            const s = 44;
-            ctx.drawImage(im, sx - s / 2, sy + TILE_H / 2 - s, s, s);
-          } else {
-            ctx.fillStyle = '#3a8fd4'; ctx.fillRect(sx - 14, sy - 6, 28, 24);
-          }
+      // mobis (ordenados por profundidade)
+      const fs = [...items].sort((a, b) => (a.x + a.y) - (b.x + b.y));
+      for (const it of fs) {
+        const { sx, sy } = toScreen(it.x, it.y);
+        const x = ox + sx, y = oy + sy;
+        const im = getImg(it.furniture?.sprite);
+        // sombra
+        ctx.fillStyle = 'rgba(0,0,0,.18)';
+        ctx.beginPath(); ctx.ellipse(x, y + TILE_H / 2, 20, 9, 0, 0, Math.PI * 2); ctx.fill();
+        if (im && im.complete && im.naturalWidth) {
+          const s = 46;
+          ctx.drawImage(im, x - s / 2, y + TILE_H / 2 - s, s, s);
         } else {
-          const im = getImg(AVATAR(e.p.look || myLook));
-          if (im && im.complete && im.naturalWidth) {
-            const w = 50, h = 80;
-            ctx.drawImage(im, sx - w / 2, sy + TILE_H / 2 - h, w, h);
-          } else {
-            ctx.fillStyle = e.p.login === me ? '#ffcc2f' : '#6abe30';
-            ctx.beginPath(); ctx.arc(sx, sy + 6, 9, 0, Math.PI * 2); ctx.fill();
-          }
-          // nameplate
-          ctx.font = 'bold 11px Inter, sans-serif'; ctx.textAlign = 'center';
-          const tw = ctx.measureText(e.p.login).width;
-          ctx.fillStyle = 'rgba(0,0,0,.6)';
-          ctx.fillRect(sx - tw / 2 - 5, sy - 78, tw + 10, 16);
-          ctx.fillStyle = '#fff'; ctx.fillText(e.p.login, sx, sy - 66);
+          ctx.fillStyle = '#3a8fd4'; ctx.fillRect(x - 14, y - 6, 28, 24);
         }
       }
       raf = requestAnimationFrame(draw);
     };
     draw();
     return () => cancelAnimationFrame(raf);
-  }, [items, players, me, myLook]);
+  }, [items, floor, wall]);
 
-  function onClick(e) {
-    const cv = canvasRef.current;
-    const rect = cv.getBoundingClientRect();
-    const ox = cv.width / 2, oy = 70;
-    const mx = (e.clientX - rect.left) * (cv.width / rect.width);
-    const my = (e.clientY - rect.top) * (cv.height / rect.height);
-    const { gx, gy } = toTile(mx, my, ox, oy);
+  // ----- click-to-walk (passo a passo) -----
+  const stepTo = useCallback((tx, ty) => {
+    clearInterval(walkTimer.current);
+    walkTimer.current = setInterval(() => {
+      const cur = myPos.current;
+      if (cur.x === tx && cur.y === ty) {
+        clearInterval(walkTimer.current);
+        setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), walking: false } }));
+        return;
+      }
+      const dx = Math.sign(tx - cur.x), dy = Math.sign(ty - cur.y);
+      const nx = cur.x + dx, ny = cur.y + dy;
+      const dir = dirFrom(dx, dy);
+      myPos.current = { x: nx, y: ny, dir };
+      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: nx, y: ny, dir, walking: true, dance: 0 } }));
+      sockRef.current?.emit('player:move', { x: nx, y: ny, dir });
+    }, 360);
+  }, [me, myLook]);
+
+  // ----- pointer: click-to-walk OU posicionar mobi, com drag-to-pan -----
+  const down = useRef(null);
+  function onDown(e) { down.current = { x: e.clientX, y: e.clientY, pan: { ...pan }, moved: false }; }
+  function onMove(e) {
+    if (!down.current) return;
+    const ddx = e.clientX - down.current.x, ddy = e.clientY - down.current.y;
+    if (Math.abs(ddx) + Math.abs(ddy) > 6) {
+      down.current.moved = true;
+      setPan({ x: down.current.pan.x + ddx, y: down.current.pan.y + ddy });
+    }
+  }
+  function onUp(e) {
+    const d = down.current; down.current = null;
+    if (!d || d.moved) return; // foi pan, nao clique
+    const rect = wrapRef.current.getBoundingClientRect();
+    const lx = (e.clientX - rect.left - pan.x) / zoom - ORIGIN.x;
+    const ly = (e.clientY - rect.top - pan.y) / zoom - ORIGIN.y;
+    const gx = Math.round((lx / (TILE_W / 2) + ly / (TILE_H / 2)) / 2);
+    const gy = Math.round((ly / (TILE_H / 2) - lx / (TILE_W / 2)) / 2);
     if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) return;
-
     if (placingItem) {
       sockRef.current?.emit('room:place', { furniture_id: placingItem, x: gx, y: gy });
       onPlaced && onPlaced();
     } else {
-      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: gx, y: gy } }));
-      sockRef.current?.emit('player:move', { x: gx, y: gy });
+      stepTo(gx, gy);
     }
   }
+  function onWheel(e) {
+    e.preventDefault();
+    setZoom(z => Math.max(0.5, Math.min(2.2, z - Math.sign(e.deltaY) * 0.12)));
+  }
+
+  function doDance(n) {
+    const d = myDance === n ? 0 : n;
+    setMyDance(d);
+    setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), dance: d } }));
+    sockRef.current?.emit('player:dance', { dance: d });
+  }
+  function setDecor(kind, id) {
+    if (kind === 'floor') setFloor(id); else setWall(id);
+    sockRef.current?.emit('room:decor', { [kind]: id });
+  }
+
+  const meState = players[me] || { x: 5, y: 5, dir: 4, dance: myDance, walking: false, look: myLook };
+  const allPlayers = { ...players, [me]: { ...meState, login: me, look: myLook } };
 
   return (
     <div>
-      <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', border: '2px solid var(--hb-border)' }}>
-        <canvas ref={canvasRef} width={760} height={520}
-          onClick={onClick}
-          style={{
-            width: '100%', display: 'block',
-            background: 'linear-gradient(180deg,#16364f,#0e2638)',
-            cursor: placingItem ? 'copy' : 'pointer',
-          }}
-        />
+      {/* toolbar */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setZoom(z => Math.min(2.2, z + 0.15))}>🔍+</button>
+        <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setZoom(z => Math.max(0.5, z - 0.15))}>🔍−</button>
+        <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>⟳ centro</button>
+        <span style={{ width: 10 }} />
+        <span style={{ fontSize: 12, color: 'var(--hb-muted)' }}>Dançar:</span>
+        {[1, 2, 3, 4].map(n => (
+          <button key={n} className={'hb-btn hb-btn-sm ' + (myDance === n ? '' : 'hb-btn-ghost')} onClick={() => doDance(n)}>💃{n}</button>
+        ))}
+        {canEdit && <button className={'hb-btn hb-btn-sm ' + (editor ? '' : 'hb-btn-blue')} style={{ marginLeft: 'auto' }} onClick={() => setEditor(e => !e)}>🎨 Piso/Parede</button>}
+      </div>
+
+      {editor && canEdit && (
+        <div className="hb-card" style={{ padding: 12, marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--hb-muted)', marginBottom: 4 }}>Piso</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {Object.entries(FLOORS).map(([id, f]) => (
+              <button key={id} onClick={() => setDecor('floor', id)} title={f.name}
+                style={{ width: 30, height: 30, borderRadius: 6, border: floor === id ? '3px solid var(--hb-yellow)' : '2px solid var(--hb-border)', background: f.a, cursor: 'pointer' }} />
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--hb-muted)', marginBottom: 4 }}>Parede</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Object.entries(WALLS).map(([id, w]) => (
+              <button key={id} onClick={() => setDecor('wall', id)} title={w.name}
+                style={{ width: 30, height: 30, borderRadius: 6, border: wall === id ? '3px solid var(--hb-yellow)' : '2px solid var(--hb-border)', background: w.c, cursor: 'pointer' }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* viewport */}
+      <div ref={wrapRef} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => (down.current = null)} onWheel={onWheel}
+        style={{
+          position: 'relative', width: '100%', height: 520, overflow: 'hidden',
+          borderRadius: 12, border: '2px solid var(--hb-border)',
+          background: 'linear-gradient(180deg,#0d2438,#091824)',
+          cursor: placingItem ? 'copy' : 'grab', userSelect: 'none',
+        }}>
+        <div style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})` }}>
+          <canvas ref={canvasRef} width={760} height={460} style={{ display: 'block' }} />
+          {/* avatares (DOM = GIF anima) */}
+          {Object.values(allPlayers).map(p => {
+            const { sx, sy } = toScreen(p.x ?? 5, p.y ?? 5);
+            const left = ORIGIN.x + sx, top = ORIGIN.y + sy;
+            const moving = p.walking, dancing = (p.dance || 0) > 0;
+            const url = AV(p.look || myLook, { dir: p.dir ?? 4, action: moving ? 'wlk' : 'std', dance: p.dance || 0, gif: moving || dancing });
+            return (
+              <div key={p.login} style={{
+                position: 'absolute', left, top, width: 0, height: 0,
+                transition: 'left .34s linear, top .34s linear', zIndex: 1000 + Math.round((p.x + p.y) * 10),
+              }}>
+                <div style={{ position: 'absolute', left: '50%', top: -86, transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>
+                  <div style={{ background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 6, textAlign: 'center' }}>{p.login}</div>
+                </div>
+                <img src={url} alt="" style={{ position: 'absolute', left: -25, top: -78, height: 90, imageRendering: 'pixelated', pointerEvents: 'none' }} />
+              </div>
+            );
+          })}
+        </div>
         {placingItem && (
-          <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(255,204,47,.95)',
-            color: '#3a2a00', padding: '6px 12px', borderRadius: 8, fontWeight: 700, fontSize: 13 }}>
+          <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(255,204,47,.95)', color: '#3a2a00', padding: '6px 12px', borderRadius: 8, fontWeight: 700, fontSize: 13 }}>
             🪑 Clique no quarto pra posicionar
           </div>
         )}
+        <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 11, color: 'var(--hb-muted)' }}>arraste = mover câmera · scroll = zoom · clique = andar</div>
       </div>
+
       <ChatPanel messages={chat} onSend={(t) => sockRef.current?.emit('chat:msg', { text: t })} />
     </div>
   );
@@ -179,9 +334,7 @@ function ChatPanel({ messages, onSend }) {
       <div style={{ maxHeight: 110, overflowY: 'auto', padding: 10, fontSize: 13 }}>
         {messages.length === 0 && <div style={{ color: 'var(--hb-muted)' }}>💬 Diga oi pros devs do quarto…</div>}
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: 2 }}>
-            <b style={{ color: 'var(--hb-blue)' }}>{m.login}:</b> {m.text}
-          </div>
+          <div key={i} style={{ marginBottom: 2 }}><b style={{ color: 'var(--hb-blue)' }}>{m.login}:</b> {m.text}</div>
         ))}
         <div ref={endRef} />
       </div>

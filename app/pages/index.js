@@ -14,10 +14,12 @@ export default function Home() {
   const [me, setMe] = useState(null);
   const [view, setView] = useState('home');
   const [toast, setToast] = useState(null);
+  const [status, setStatus] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    fetch(`${API}/status`).then(r => r.json()).then(setStatus).catch(() => {});
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -40,8 +42,29 @@ export default function Home() {
     showToast(`+${r.credited ?? 0} moedas do GitHub! 🪙`);
   }
 
+  if (status?.maintenance?.on) return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeContent: 'center', textAlign: 'center', padding: 20 }}>
+      <div style={{ maxWidth: 460 }}>
+        <div style={{ fontSize: 64 }}>🚧</div>
+        <div className="hb-logo" style={{ fontSize: 26, margin: '8px 0' }}>{status.hotel?.name || 'GitHotel'}</div>
+        <p style={{ fontSize: 17, color: 'var(--hb-muted)' }}>{status.maintenance.message || 'Hotel em manutenção. Voltamos já!'}</p>
+        {session && <button className="hb-btn hb-btn-ghost" style={{ marginTop: 12 }} onClick={() => supabase.auth.signOut()}>Sair</button>}
+      </div>
+    </div>
+  );
+
   if (!session) return <Landing onLogin={login} />;
   if (!me) return <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }}><div className="spin" /></div>;
+  if (me.banned) return (
+    <div style={{ minHeight: '100vh', display: 'grid', placeContent: 'center', textAlign: 'center', padding: 20 }}>
+      <div style={{ maxWidth: 460 }}>
+        <div style={{ fontSize: 64 }}>🚫</div>
+        <h2>Você foi banido do {status?.hotel?.name || 'GitHotel'}</h2>
+        <p style={{ color: 'var(--hb-muted)' }}>Se acha que foi engano, fale com a administração.</p>
+        <button className="hb-btn hb-btn-ghost" style={{ marginTop: 12 }} onClick={() => supabase.auth.signOut()}>Sair</button>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -154,7 +177,7 @@ function HotelView({ me, setMe, showToast }) {
           {!isOwn && <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setVisiting(null)}>← Voltar</button>}
         </div>
         <div style={{ padding: 12 }}>
-          <IsoRoom roomLogin={roomLogin} me={me.github_login} myLook={me.look}
+          <IsoRoom roomLogin={roomLogin} me={me.github_login} myLook={me.look} canEdit={isOwn}
             placingItem={isOwn ? placing : null} onPlaced={() => { setPlacing(null); showToast('Mobi posicionado! 🪑'); }} />
         </div>
       </div>

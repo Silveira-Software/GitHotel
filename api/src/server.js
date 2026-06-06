@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { db } from './db.js';
 import { authMiddleware, verifySupabaseJWT } from './auth.js';
 import { syncGithubActivity } from './github.js';
+import { getFurni, safeClass } from './furni.js';
 
 const app = express();
 const origin = (process.env.APP_ORIGIN || '*').split(',').map(s => s.trim());
@@ -139,6 +140,30 @@ app.get('/articles/:slug', async (req, res) => {
     .select('*').eq('slug', req.params.slug).eq('published', true).single();
   if (!data) return res.status(404).json({ error: 'not_found' });
   res.json(data);
+});
+
+// ---------- Furni 3D (Nitro) ----------
+// Dados de render (assets/frames/visualizations) — JSON pro cliente compor
+app.get('/furni/:cls/data', async (req, res) => {
+  const f = await getFurni(req.params.cls);
+  if (!f || !f.ok) return res.status(404).json({ ok: false });
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.json({ ok: true, data: f.json, sheet: `/furni/${safeClass(req.params.cls)}/sheet.png` });
+});
+
+// Spritesheet PNG extraído do .nitro
+app.get('/furni/:cls/sheet.png', async (req, res) => {
+  const f = await getFurni(req.params.cls);
+  if (!f || !f.ok) return res.status(404).end();
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(f.png);
+});
+
+// Existe modelo 3D pra este classname?
+app.get('/furni/:cls/check', async (req, res) => {
+  const f = await getFurni(req.params.cls);
+  res.json({ ok: !!(f && f.ok) });
 });
 
 // Quem esta online agora (presenca via sockets)

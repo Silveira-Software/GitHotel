@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { API, getToken } from '../lib/client';
+import { loadModel, getModel, drawFurni, classFromSprite } from '../lib/furni3d';
 
 const TILE_W = 64, TILE_H = 32, GRID = 11, WALL_H = 110;
 
@@ -85,6 +86,11 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, me, myLook, 
     });
   }, [roomLogin]);
 
+  // pré-carrega modelos 3D dos mobis do quarto
+  useEffect(() => {
+    items.forEach(it => loadModel(classFromSprite(it.furniture?.sprite)));
+  }, [items]);
+
   // ----- socket -----
   useEffect(() => {
     let sock;
@@ -162,20 +168,25 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, me, myLook, 
         ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.stroke();
       }
 
-      // mobis (ordenados por profundidade)
+      // mobis (ordenados por profundidade) — render 3D Nitro, fallback icone
+      const now = performance.now();
       const fs = [...items].sort((a, b) => (a.x + a.y) - (b.x + b.y));
       for (const it of fs) {
         const { sx, sy } = toScreen(it.x, it.y);
         const x = ox + sx, y = oy + sy;
-        const im = getImg(it.furniture?.sprite);
-        // sombra
+        // sombra no chao
         ctx.fillStyle = 'rgba(0,0,0,.18)';
         ctx.beginPath(); ctx.ellipse(x, y + TILE_H / 2, 20, 9, 0, 0, Math.PI * 2); ctx.fill();
-        if (im && im.complete && im.naturalWidth) {
-          const s = 46;
-          ctx.drawImage(im, x - s / 2, y + TILE_H / 2 - s, s, s);
+        const cls = classFromSprite(it.furniture?.sprite);
+        const model = getModel(cls);
+        const dir = ((((it.rotation || 0) / 90) * 2) % 8) || 2;
+        if (model && model.ok && drawFurni(ctx, model, x, y, { direction: dir, t: now })) {
+          // furni 3D desenhado
         } else {
-          ctx.fillStyle = '#3a8fd4'; ctx.fillRect(x - 14, y - 6, 28, 24);
+          const im = getImg(it.furniture?.sprite);
+          if (im && im.complete && im.naturalWidth) {
+            const s = 46; ctx.drawImage(im, x - s / 2, y + TILE_H / 2 - s, s, s);
+          }
         }
       }
       raf = requestAnimationFrame(draw);

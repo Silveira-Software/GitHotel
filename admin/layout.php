@@ -4,6 +4,7 @@ function layout_head($title = 'Admin') {
     'index.php' => '📊 Dashboard',
     'users.php' => '👤 Usuários',
     'furniture.php' => '🛋️ Mobis',
+    'sprites.php' => '🧊 Sprites 3D',
     'articles.php' => '📰 Notícias',
     'transactions.php' => '🪙 Transações',
     'settings.php' => '⚙️ Hotel / Manutenção',

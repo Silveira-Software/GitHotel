@@ -216,8 +216,10 @@ app.post('/redeem', authMiddleware, async (req, res) => {
 // ---------- Navegador de quartos (oficiais + dos devs) ----------
 app.get('/rooms', async (_req, res) => {
   const { data: official } = await db.from('rooms').select('slug, name, descr, w, h, floor, sort').order('sort');
+  const off = official || [];
+  for (const r of off) { try { r.online = (await io.in(r.slug).fetchSockets()).length; } catch { r.online = 0; } }
   const { data: user } = await db.rpc('public_rooms');
-  res.json({ official: official || [], user: user || [] });
+  res.json({ official: off, user: user || [] });
 });
 
 async function profileByLogin(login) {
@@ -328,6 +330,8 @@ app.post('/market/cancel', authMiddleware, async (req, res) => {
 
 // Quem esta online agora (presenca via sockets)
 let onlineCount = 0;
+const onlineLogins = new Map();   // login -> nº de conexoes
+app.get('/online/who', (_req, res) => res.json([...onlineLogins.keys()]));
 app.get('/online', (_req, res) => res.json({ online: onlineCount }));
 
 const httpServer = createServer(app);
@@ -349,6 +353,7 @@ io.on('connection', async (socket) => {
   socket.data.look = profile.look || DEFAULT_LOOK;
   socket.data.dir = 2;
   socket.join('user:' + profile.github_login);   // canal pessoal (DM/amigos)
+  onlineLogins.set(profile.github_login, (onlineLogins.get(profile.github_login) || 0) + 1);
   onlineCount++;
   io.emit('hotel:online', { online: onlineCount });
 
@@ -475,6 +480,8 @@ io.on('connection', async (socket) => {
 
   socket.on('disconnect', () => {
     onlineCount = Math.max(0, onlineCount - 1);
+    const n = (onlineLogins.get(profile.github_login) || 1) - 1;
+    if (n <= 0) onlineLogins.delete(profile.github_login); else onlineLogins.set(profile.github_login, n);
     io.emit('hotel:online', { online: onlineCount });
     if (socket.data.room)
       socket.to(socket.data.room).emit('player:leave', { login: profile.github_login });

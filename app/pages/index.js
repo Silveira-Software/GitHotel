@@ -17,6 +17,7 @@ export default function Home() {
   const [status, setStatus] = useState(null);
   const [visitRoom, setVisitRoom] = useState(null);
   const [editLook, setEditLook] = useState(false);
+  const [unread, setUnread] = useState(0);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -25,6 +26,7 @@ export default function Home() {
     return () => sub.subscription.unsubscribe();
   }, []);
   useEffect(() => { if (session) api('/me').then(setMe); }, [session]);
+  useEffect(() => { if (!session) return; const f = () => api('/dms').then(d => setUnread(d.unread || 0)).catch(() => {}); f(); const t = setInterval(f, 15000); return () => clearInterval(t); }, [session]);
 
   const showToast = useCallback((msg, kind = 'ok') => { setToast({ msg, kind }); setTimeout(() => setToast(null), 2600); }, []);
 
@@ -49,7 +51,7 @@ export default function Home() {
 
   return (
     <>
-      <TopBar me={me} onSync={sync} onLogout={() => supabase.auth.signOut()} view={view} setView={setView} onEditLook={() => setEditLook(true)} />
+      <TopBar me={me} onSync={sync} onLogout={() => supabase.auth.signOut()} view={view} setView={setView} onEditLook={() => setEditLook(true)} unread={unread} />
       {editLook && <AvatarEditor me={me} onClose={() => setEditLook(false)} onSaved={(look) => { setMe(m => ({ ...m, look })); setEditLook(false); showToast('Visual salvo! 👕'); }} />}
       <main style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 16px 60px' }}>
         {view === 'home' && <HomeView me={me} setView={setView} onVisit={visit} />}
@@ -68,14 +70,14 @@ export default function Home() {
 
 const Center = ({ children }) => <div style={{ minHeight: '100vh', display: 'grid', placeContent: 'center', textAlign: 'center', padding: 20 }}><div style={{ maxWidth: 480 }}>{children}</div></div>;
 
-function TopBar({ me, onSync, onLogout, view, setView, onEditLook }) {
+function TopBar({ me, onSync, onLogout, view, setView, onEditLook, unread }) {
   const tabs = [['home', '🏠 Início'], ['navigator', '🚪 Quartos'], ['hotel', '🏨 Meu Quarto'], ['catalog', '🛒 Catálogo'], ['market', '🏪 Mercado'], ['bag', '🛍️ Sacola'], ['console', '💬 Amigos'], ['top', '🏆 Ranking']];
   return (
     <div className="hb-top">
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <span className="hb-logo">GitHotel</span>
         <nav className="hb-nav" style={{ display: 'flex', gap: 2, flex: 1, flexWrap: 'wrap' }}>
-          {tabs.map(([k, label]) => <a key={k} className={view === k ? 'active' : ''} onClick={() => setView(k)} style={{ cursor: 'pointer' }}>{label}</a>)}
+          {tabs.map(([k, label]) => <a key={k} className={view === k ? 'active' : ''} onClick={() => setView(k)} style={{ cursor: 'pointer', position: 'relative' }}>{label}{k === 'console' && unread > 0 && <span style={{ position: 'absolute', top: -2, right: -4, background: 'var(--hb-red)', color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 10, padding: '0 5px' }}>{unread}</span>}</a>)}
         </nav>
         <span className="hb-pill" style={{ color: 'var(--hb-yellow)' }}>🪙 {me.coins ?? 0}</span>
         <button className="hb-btn hb-btn-blue hb-btn-sm" onClick={onSync}>↻ Sync GitHub</button>
@@ -262,7 +264,7 @@ function NavigatorView({ me, onVisit }) {
           {data.official.map(r => (
             <div key={r.slug} className="hb-card" style={{ padding: 0, overflow: 'hidden', cursor: 'pointer' }} onClick={() => onVisit(r.slug)}>
               <div style={{ height: 90, background: 'linear-gradient(135deg,#2a6390,#3a8fd4)', display: 'grid', placeItems: 'center', fontSize: 40 }}>{ROOM_ICON[r.slug] || '🚪'}</div>
-              <div style={{ padding: 12 }}><div style={{ fontWeight: 800 }}>{r.name}</div><div style={{ fontSize: 12, color: 'var(--hb-muted)' }}>{r.descr}</div></div>
+              <div style={{ padding: 12 }}><div style={{ fontWeight: 800 }}>{r.name}</div><div style={{ fontSize: 12, color: 'var(--hb-muted)' }}>{r.descr}</div><div style={{ fontSize: 12, color: 'var(--hb-green)', marginTop: 4 }}>🟢 {r.online || 0} online</div></div>
             </div>
           ))}
         </div>
@@ -480,8 +482,10 @@ function ConsoleView({ me, showToast, onVisit }) {
   const [open, setOpen] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState('');
+  const [online, setOnline] = useState([]);
   const load = useCallback(() => api('/friends').then(setData), []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { const f = () => fetch(`${API}/online/who`).then(r => r.json()).then(setOnline).catch(() => {}); f(); const t = setInterval(f, 15000); return () => clearInterval(t); }, []);
   useEffect(() => {
     if (!open) return;
     const fetchMsgs = () => api(`/dms/${open}`).then(setMsgs);
@@ -512,6 +516,7 @@ function ConsoleView({ me, showToast, onVisit }) {
           {data.friends.length === 0 && <p style={{ color: 'var(--hb-muted)', fontSize: 13 }}>Adicione amigos pelo @login.</p>}
           {data.friends.map(u => (
             <div key={u.id} className={'cat-item' + (open === u.github_login ? ' active' : '')} onClick={() => setOpen(u.github_login)} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span title={online.includes(u.github_login) ? 'online' : 'offline'} style={{ width: 8, height: 8, borderRadius: '50%', background: online.includes(u.github_login) ? 'var(--hb-green)' : '#555', flexShrink: 0 }} />
               <img src={HEAD(u.look || '')} style={{ height: 28, imageRendering: 'pixelated' }} alt="" />
               <span style={{ flex: 1 }}>{u.github_login}</span>
               <span title="visitar quarto" onClick={(e) => { e.stopPropagation(); onVisit(u.github_login); }}>🚪</span>

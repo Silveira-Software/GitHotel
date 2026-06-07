@@ -5,6 +5,7 @@ function layout_head($title = 'Admin') {
     'users.php' => '👤 Usuários',
     'furniture.php' => '🛋️ Mobis',
     'sprites.php' => '🧊 Sprites 3D',
+    'rooms.php' => '🏨 Salas',
     'articles.php' => '📰 Notícias',
     'codes.php' => '🎟️ Códigos',
     'transactions.php' => '🪙 Transações',

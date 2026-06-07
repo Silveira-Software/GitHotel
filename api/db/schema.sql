@@ -176,3 +176,39 @@ create table if not exists public.articles (
 alter table public.articles enable row level security;
 drop policy if exists "articles_read" on public.articles;
 create policy "articles_read" on public.articles for select using (published = true);
+
+-- ============================================================
+-- v3 (Economia + furni interativo + quartos publicos) — 2026-06
+-- ============================================================
+create table if not exists public.credit_codes (
+  code text primary key, amount int not null, batch text,
+  used_by uuid references public.profiles(id), used_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table public.credit_codes enable row level security;
+
+create table if not exists public.coin_packages (
+  id text primary key, name text not null, coins int not null, bonus int default 0,
+  price_cents int not null, currency text default 'BRL', active boolean default true, sort int default 0
+);
+alter table public.coin_packages enable row level security;
+create policy coin_packages_read on public.coin_packages for select using (active = true);
+
+alter table public.profiles add column if not exists banned boolean not null default false;
+alter table public.profiles add column if not exists room_floor text default 'floor_wood';
+alter table public.profiles add column if not exists room_wall  text default 'wall_blue';
+alter table public.furniture add column if not exists fn text;
+alter table public.furniture add column if not exists fn_params jsonb default '{}'::jsonb;
+
+create table if not exists public.furni_cooldowns (
+  user_id uuid references public.profiles(id), furniture_id text, last_at timestamptz,
+  primary key (user_id, furniture_id)
+);
+alter table public.furni_cooldowns enable row level security;
+
+create table if not exists public.settings (key text primary key, value jsonb not null default '{}'::jsonb, updated_at timestamptz default now());
+alter table public.settings enable row level security;
+create policy settings_read on public.settings for select using (true);
+
+-- RPCs: redeem_code, use_coin_machine, public_rooms, hotel_stats, furniture_categories
+-- (ver corpo completo no histórico do projeto / migrações aplicadas)

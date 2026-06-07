@@ -33,6 +33,7 @@ function dirFrom(dx, dy) {
 const imgCache = {};
 function getImg(url) { if (!url) return null; if (imgCache[url]) return imgCache[url]; const im = new Image(); im.crossOrigin = 'anonymous'; im.src = url; imgCache[url] = im; return im; }
 function isWalkable(it) { const s = (it.furniture_id || '') + ' ' + (classFromSprite(it.furniture?.sprite) || ''); return /rug|carpet|mat|doormat|tile|sticker/i.test(s); }
+function isSeat(it) { const s = (it.furniture_id || '') + ' ' + (it.furniture?.category || '') + ' ' + (classFromSprite(it.furniture?.sprite) || ''); return /chair|sofa|seat|bench|stool|throne|couch|seating|sof\b/i.test(s); }
 
 export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryChange, onFurniUsed, me, myLook, canEdit }) {
   const canvasRef = useRef(null), sockRef = useRef(null), wrapRef = useRef(null);
@@ -51,7 +52,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
   const walkTimer = useRef(null), pathRef = useRef([]), otherWalkTimers = useRef({});
   const myPos = useRef({ x: 2, y: 2, dir: 4 });
 
-  const blocked = useMemo(() => { const s = new Set(); items.forEach(it => { if (!isWalkable(it)) s.add(it.x + ',' + it.y); }); return s; }, [items]);
+  const blocked = useMemo(() => { const s = new Set(); items.forEach(it => { if (!isWalkable(it) && !isSeat(it)) s.add(it.x + ',' + it.y); }); return s; }, [items]);
 
   function fitView(w = room.w, h = room.h) {
     const left = ORIGIN.x + toScreen(0, h).sx - TILE_W / 2, right = ORIGIN.x + toScreen(w, 0).sx + TILE_W / 2;
@@ -86,9 +87,9 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
       sock.on('room:players', (list) => { const m = {}; list.forEach(p => { m[p.login] = { ...p, walking: false }; }); setPlayers(m); });
       sock.on('player:enter', (p) => setPlayers(s => ({ ...s, [p.login]: { ...p, walking: false } })));
       sock.on('player:move', (p) => {
-        setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), x: p.x, y: p.y, dir: p.dir ?? (s[p.login]?.dir), walking: true } }));
+        setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), x: p.x, y: p.y, dir: p.dir ?? (s[p.login]?.dir), walking: !p.sit, sit: !!p.sit } }));
         clearTimeout(otherWalkTimers.current[p.login]);
-        otherWalkTimers.current[p.login] = setTimeout(() => setPlayers(s => s[p.login] ? ({ ...s, [p.login]: { ...s[p.login], walking: false } }) : s), 430);
+        if (!p.sit) otherWalkTimers.current[p.login] = setTimeout(() => setPlayers(s => s[p.login] ? ({ ...s, [p.login]: { ...s[p.login], walking: false } }) : s), 430);
       });
       sock.on('player:dance', (p) => setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), dance: p.dance } })));
       sock.on('player:leave', (p) => setPlayers(s => { const c = { ...s }; delete c[p.login]; return c; }));
@@ -156,16 +157,23 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
     const path = []; let cur = key(goal.x, goal.y); while (cur) { const [x, y] = cur.split(',').map(Number); path.unshift({ x, y }); cur = prev[cur]; }
     return path;
   }
-  const walkTo = useCallback((tx, ty) => {
-    const cur = myPos.current; const path = findPath(cur.x, cur.y, tx, ty); if (!path || path.length < 2) return;
+  const walkTo = useCallback((tx, ty, sitDir = null) => {
+    const cur = myPos.current; const path = findPath(cur.x, cur.y, tx, ty); if (!path) return;
     pathRef.current = path.slice(1); clearInterval(walkTimer.current);
+    const finish = () => {
+      if (sitDir != null) {
+        myPos.current = { x: tx, y: ty, dir: sitDir };
+        setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: tx, y: ty, dir: sitDir, walking: false, sit: true, dance: 0 } }));
+        sockRef.current?.emit('player:move', { x: tx, y: ty, dir: sitDir, sit: true });
+      } else setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), walking: false } }));
+    };
     const tick = () => {
       const next = pathRef.current.shift();
-      if (!next) { clearInterval(walkTimer.current); setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), walking: false } })); return; }
+      if (!next) { clearInterval(walkTimer.current); finish(); return; }
       const c = myPos.current, dir = dirFrom(Math.sign(next.x - c.x), Math.sign(next.y - c.y));
       myPos.current = { x: next.x, y: next.y, dir };
-      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: next.x, y: next.y, dir, walking: true, dance: 0 } }));
-      sockRef.current?.emit('player:move', { x: next.x, y: next.y, dir });
+      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: next.x, y: next.y, dir, walking: true, sit: false, dance: 0 } }));
+      sockRef.current?.emit('player:move', { x: next.x, y: next.y, dir, sit: false });
     };
     tick(); walkTimer.current = setInterval(tick, 360);
   }, [room, blocked, me, myLook]);
@@ -184,8 +192,15 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
     if (gx < 0 || gy < 0 || gx >= room.w || gy >= room.h) { setSelected(null); return; }
     const here = items.find(i => i.x === gx && i.y === gy);
     if (placingItem && !right) { sockRef.current?.emit('room:place', { furniture_id: placingItem, x: gx, y: gy, rotation: 2 }); onPlaced && onPlaced(); return; }
-    if (here) { if (canEdit) { setSelected(here.id); return; } if (here.furniture?.fn) { sockRef.current?.emit('furni:use', { id: here.id }); return; } if (!right) walkTo(gx, gy); return; }
-    setSelected(null); if (!right) walkTo(gx, gy);
+    if (here) {
+      if (right && canEdit) { setSelected(here.id); return; }            // direito (dono) = menu
+      if (isSeat(here) && !right) { walkTo(here.x, here.y, here.rotation ?? 2); return; } // senta
+      if (here.furniture?.fn && !right) { sockRef.current?.emit('furni:use', { id: here.id }); return; } // usa máquina
+      if (canEdit) { setSelected(here.id); return; }                     // dono: menu
+      if (!right) walkTo(here.x, here.y); return;                        // visitante anda até
+    }
+    if (right) { setSelected(null); return; }
+    setSelected(null); walkTo(gx, gy);
   }
   function onWheel(e) { e.preventDefault(); setZoom(z => Math.max(0.4, Math.min(2.4, z - Math.sign(e.deltaY) * 0.12))); }
 
@@ -226,8 +241,10 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
           <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} style={{ display: 'block' }} />
           {Object.values(allPlayers).map(p => {
             const { sx, sy } = toScreen(p.x ?? 2, p.y ?? 2); const cx = ORIGIN.x + sx, cy = ORIGIN.y + sy + TILE_H / 2;
-            const moving = p.walking, dancing = (p.dance || 0) > 0;
-            const url = AV(p.look || myLook, { dir: p.dir ?? 4, action: moving ? 'wlk' : 'std', dance: p.dance || 0, gif: moving || dancing });
+            const sitting = !!p.sit;
+            const moving = p.walking && !sitting, dancing = (p.dance || 0) > 0 && !sitting;
+            const action = sitting ? 'sit' : (moving ? 'wlk' : 'std');
+            const url = AV(p.look || myLook, { dir: p.dir ?? 4, action, dance: dancing ? p.dance : 0, gif: moving || dancing });
             const bubble = bubbles[p.login];
             return (
               <div key={p.login} style={{ position: 'absolute', left: cx, top: cy, width: 0, height: 0, transition: 'left .36s linear, top .36s linear', zIndex: 1000 + Math.round((p.x + p.y) * 10) }}>
@@ -238,7 +255,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
                   </div>
                 </div>)}
                 <div style={{ position: 'absolute', left: '50%', top: -(AV_H + 4), transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}><div style={{ background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 6 }}>{p.login}</div></div>
-                <img src={url} alt="" style={{ position: 'absolute', left: -AV_W / 2, top: -(AV_H - AV_FOOT), width: AV_W, height: AV_H, imageRendering: 'pixelated', pointerEvents: 'none' }} />
+                <img src={url} alt="" style={{ position: 'absolute', left: -AV_W / 2, top: -(AV_H - AV_FOOT) + (sitting ? 18 : 0), width: AV_W, height: AV_H, imageRendering: 'pixelated', pointerEvents: 'none' }} />
               </div>
             );
           })}

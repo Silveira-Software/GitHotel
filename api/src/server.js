@@ -253,20 +253,21 @@ io.on('connection', async (socket) => {
     const sockets = await io.in(roomLogin).fetchSockets();
     const players = sockets.map((s) => ({
       login: s.data.login, look: s.data.look, x: s.data.x ?? 5, y: s.data.y ?? 5,
-      dir: s.data.dir ?? 2, dance: s.data.dance || 0,
+      dir: s.data.dir ?? 2, dance: s.data.dance || 0, sit: s.data.sit || false,
     }));
     socket.emit('room:players', players);
     socket.to(roomLogin).emit('player:enter', {
-      login: profile.github_login, look: socket.data.look, x: 5, y: 5, dir: 2, dance: 0,
+      login: profile.github_login, look: socket.data.look, x: 5, y: 5, dir: 2, dance: 0, sit: false,
     });
   });
 
-  // movimento: alvo + direcao (cliente faz o tween de andar)
-  socket.on('player:move', ({ x, y, dir }) => {
+  // movimento: alvo + direcao + sentado (cliente faz o tween de andar)
+  socket.on('player:move', ({ x, y, dir, sit }) => {
     socket.data.x = x; socket.data.y = y;
     if (dir != null) socket.data.dir = dir;
+    socket.data.sit = !!sit;
     if (socket.data.room)
-      socket.to(socket.data.room).emit('player:move', { login: profile.github_login, x, y, dir: socket.data.dir });
+      socket.to(socket.data.room).emit('player:move', { login: profile.github_login, x, y, dir: socket.data.dir, sit: socket.data.sit });
   });
 
   // dança / gesto

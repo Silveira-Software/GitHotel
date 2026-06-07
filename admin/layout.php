@@ -6,6 +6,7 @@ function layout_head($title = 'Admin') {
     'furniture.php' => '🛋️ Mobis',
     'sprites.php' => '🧊 Sprites 3D',
     'articles.php' => '📰 Notícias',
+    'codes.php' => '🎟️ Códigos',
     'transactions.php' => '🪙 Transações',
     'settings.php' => '⚙️ Hotel / Manutenção',
   ];

@@ -112,7 +112,7 @@ app.get('/room/:login', async (req, res) => {
     .eq('github_login', req.params.login).single();
   if (!owner) return res.status(404).json({ error: 'not_found' });
   const { data: items } = await db.from('room_items')
-    .select('id, furniture_id, x, y, rotation, furniture(sprite, width, height, name)')
+    .select('id, furniture_id, x, y, rotation, furniture(sprite, width, height, name, fn, fn_params)')
     .eq('user_id', owner.id);
   res.json({ owner: { ...owner, look: owner.look || DEFAULT_LOOK }, items: items || [] });
 });
@@ -174,6 +174,27 @@ function furniDirs(json) {
     return Object.keys(v.directions || { 0: {} }).map(Number).sort((a, b) => a - b);
   } catch { return [0]; }
 }
+
+// ---------- Economia: pacotes + resgate de codigo ----------
+app.get('/packages', async (_req, res) => {
+  const { data } = await db.from('coin_packages').select('*').eq('active', true).order('sort');
+  res.json(data || []);
+});
+
+app.post('/redeem', authMiddleware, async (req, res) => {
+  const profile = await getOrCreateProfile(req.user);
+  const code = String((req.body || {}).code || '').trim().toUpperCase();
+  if (!code) return res.json({ ok: false, error: 'invalid' });
+  const { data, error } = await db.rpc('redeem_code', { p_user: profile.id, p_code: code });
+  if (error) return res.status(500).json({ ok: false, error: error.message });
+  res.json(data);
+});
+
+// ---------- Navegador de quartos publicos ----------
+app.get('/rooms', async (_req, res) => {
+  const { data } = await db.rpc('public_rooms');
+  res.json(data || []);
+});
 
 // Quem esta online agora (presenca via sockets)
 let onlineCount = 0;
@@ -272,6 +293,19 @@ io.on('connection', async (socket) => {
     const r = ((Number(rotation) % 360) + 360) % 360;
     await db.from('room_items').update({ rotation: r }).eq('id', id).eq('user_id', profile.id);
     io.in(profile.github_login).emit('room:rotated', { id, rotation: r });
+  });
+
+  // usar furni interativo (ex: GitCoin machine) — credita quem clicou
+  socket.on('furni:use', async ({ id }) => {
+    const { data: ri } = await db.from('room_items')
+      .select('furniture_id, furniture(fn, fn_params, name)').eq('id', id).single();
+    if (!ri || !ri.furniture?.fn) return;
+    if (ri.furniture.fn === 'coin_machine') {
+      const amount = Number(ri.furniture.fn_params?.amount) || 5;
+      const cd = Number(ri.furniture.fn_params?.cooldown) || 300;
+      const { data } = await db.rpc('use_coin_machine', { p_user: profile.id, p_furni: ri.furniture_id, p_amount: amount, p_cooldown: cd });
+      socket.emit('furni:used', { id, name: ri.furniture.name, ...data });
+    }
   });
 
   // guardar mobi de volta na mochila

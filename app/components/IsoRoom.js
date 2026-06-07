@@ -51,7 +51,7 @@ function getImg(url) {
   const im = new Image(); im.crossOrigin = 'anonymous'; im.src = url; imgCache[url] = im; return im;
 }
 
-export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryChange, me, myLook, canEdit }) {
+export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryChange, onFurniUsed, me, myLook, canEdit }) {
   const canvasRef = useRef(null);
   const sockRef = useRef(null);
   const wrapRef = useRef(null);
@@ -113,6 +113,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
       sock.on('room:rotated', ({ id, rotation }) => setItems(s => s.map(i => i.id === id ? { ...i, rotation } : i)));
       sock.on('room:decor', (d) => { if (d.room_floor) setFloor(d.room_floor); if (d.room_wall) setWall(d.room_wall); });
       sock.on('inventory:changed', () => onInventoryChange && onInventoryChange());
+      sock.on('furni:used', (d) => onFurniUsed && onFurniUsed(d));
       sock.on('chat:msg', (m) => setChat(s => [...s.slice(-40), m]));
     })();
     return () => sock && sock.disconnect();
@@ -191,7 +192,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
     const gy = Math.round((ly / (TILE_H / 2) - lx / (TILE_W / 2)) / 2);
     return { gx, gy };
   }
-  function onDown(e) { down.current = { x: e.clientX, y: e.clientY, pan: { ...pan }, moved: false }; }
+  function onDown(e) { down.current = { x: e.clientX, y: e.clientY, pan: { ...pan }, moved: false, button: e.button }; }
   function onMove(e) {
     if (!down.current) return;
     const ddx = e.clientX - down.current.x, ddy = e.clientY - down.current.y;
@@ -199,16 +200,24 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
   }
   function onUp(e) {
     const d = down.current; down.current = null;
-    if (!d || d.moved) return;
+    if (!d || d.moved) return;                       // arrasto = câmera (pan)
+    const right = d.button === 2;
     const { gx, gy } = screenToTile(e.clientX, e.clientY);
     if (gx < 0 || gy < 0 || gx >= GRID || gy >= GRID) { setSelected(null); return; }
-    if (placingItem) { sockRef.current?.emit('room:place', { furniture_id: placingItem, x: gx, y: gy, rotation: 2 }); onPlaced && onPlaced(); return; }
     const here = items.find(i => i.x === gx && i.y === gy);
-    if (canEdit && here) { setSelected(here.id); return; }   // seleciona pra girar/guardar
+    // colocar mobi (botão esquerdo)
+    if (placingItem && !right) { sockRef.current?.emit('room:place', { furniture_id: placingItem, x: gx, y: gy, rotation: 2 }); onPlaced && onPlaced(); return; }
+    if (here) {
+      if (canEdit) { setSelected(here.id); return; }                 // dono: menu girar/guardar/usar
+      if (here.furniture?.fn) { sockRef.current?.emit('furni:use', { id: here.id }); return; } // visitante: usa máquina
+      if (!right) stepTo(gx, gy);                                     // anda até o mobi
+      return;
+    }
     setSelected(null);
-    stepTo(gx, gy);
+    if (!right) stepTo(gx, gy);                       // esquerdo no vazio = andar
   }
   function onWheel(e) { e.preventDefault(); setZoom(z => Math.max(0.4, Math.min(2.4, z - Math.sign(e.deltaY) * 0.12))); }
+  function onContext(e) { e.preventDefault(); }      // bloqueia menu do navegador
 
   function rotateSel() {
     const it = items.find(i => i.id === selected); if (!it) return;
@@ -253,7 +262,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
         </div>
       )}
 
-      <div ref={wrapRef} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => (down.current = null)} onWheel={onWheel}
+      <div ref={wrapRef} onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={() => (down.current = null)} onWheel={onWheel} onContextMenu={onContext}
         style={{ position: 'relative', width: '100%', height: VIEW_H, overflow: 'hidden', borderRadius: 12, border: '2px solid var(--hb-border)', background: 'linear-gradient(180deg,#0d2438,#091824)', cursor: placingItem ? 'copy' : 'grab', userSelect: 'none' }}>
         <div style={{ position: 'absolute', left: 0, top: 0, transformOrigin: '0 0', transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})` }}>
           <canvas ref={canvasRef} width={CANVAS_W} height={CANVAS_H} style={{ display: 'block' }} />
@@ -276,14 +285,15 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
         {/* popover do furni selecionado */}
         {selItem && canEdit && (
           <div style={{ position: 'absolute', left: pan.x + (ORIGIN.x + selScreen.sx) * zoom, top: pan.y + (ORIGIN.y + selScreen.sy - 70) * zoom, transform: 'translateX(-50%)', zIndex: 3000, display: 'flex', gap: 6, background: '#0c2236', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 6 }}>
-            <button className="hb-btn hb-btn-sm" onClick={rotateSel}>↻ Girar</button>
+            {selItem.furniture?.fn && <button className="hb-btn hb-btn-sm" onClick={() => sockRef.current?.emit('furni:use', { id: selected })}>⚡ Usar</button>}
+            <button className="hb-btn hb-btn-sm hb-btn-blue" onClick={rotateSel}>↻ Girar</button>
             <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={pickupSel}>📦 Guardar</button>
             <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setSelected(null)}>✕</button>
           </div>
         )}
 
         {placingItem && (<div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(255,204,47,.95)', color: '#3a2a00', padding: '6px 12px', borderRadius: 8, fontWeight: 700, fontSize: 13 }}>🪑 Clique num tile pra posicionar</div>)}
-        <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 11, color: 'var(--hb-muted)' }}>arraste = câmera · scroll = zoom · clique vazio = andar · clique no mobi = girar/guardar</div>
+        <div style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 11, color: 'var(--hb-muted)' }}>clique esq. = andar/usar · clique no mobi = menu · arraste = câmera · scroll = zoom</div>
       </div>
 
       <ChatPanel messages={chat} onSend={(t) => sockRef.current?.emit('chat:msg', { text: t })} />

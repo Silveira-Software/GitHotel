@@ -437,11 +437,26 @@ io.on('connection', async (socket) => {
     if (!ri) ({ data: ri } = await db.from('official_room_items')
       .select('furniture_id, furniture(fn, fn_params, name)').eq('id', id).maybeSingle());
     if (!ri || !ri.furniture?.fn) return;
-    if (ri.furniture.fn === 'coin_machine') {
+    const fn = ri.furniture.fn;
+    if (fn === 'coin_machine') {
       const amount = Number(ri.furniture.fn_params?.amount) || 5;
       const cd = Number(ri.furniture.fn_params?.cooldown) || 300;
       const { data } = await db.rpc('use_coin_machine', { p_user: profile.id, p_furni: ri.furniture_id, p_amount: amount, p_cooldown: cd });
       socket.emit('furni:used', { id, name: ri.furniture.name, ...data });
+    } else if (fn === 'dice') {
+      socket.emit('furni:dice', { value: 1 + Math.floor(Math.random() * 6) });
+    } else if (fn === 'teleport') {
+      const roomKey = socket.data.room;
+      let others = [];
+      const { data: r } = await db.from('rooms').select('slug').eq('slug', roomKey).maybeSingle();
+      if (r) {
+        const { data } = await db.from('official_room_items').select('id, x, y, furniture(fn)').eq('room_slug', roomKey);
+        others = (data || []).filter(i => i.furniture?.fn === 'teleport' && i.id !== id);
+      } else {
+        const owner = await profileByLogin(roomKey);
+        if (owner) { const { data } = await db.from('room_items').select('id, x, y, furniture(fn)').eq('user_id', owner.id); others = (data || []).filter(i => i.furniture?.fn === 'teleport' && i.id !== id); }
+      }
+      if (others.length) socket.emit('furni:teleport', { x: others[0].x, y: others[0].y });
     }
   });
 

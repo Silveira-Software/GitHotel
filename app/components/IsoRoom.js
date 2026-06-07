@@ -99,6 +99,8 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
       sock.on('room:decor', (d) => { if (d.room_floor) setFloor(d.room_floor); if (d.room_wall) setWall(d.room_wall); });
       sock.on('inventory:changed', () => onInventoryChange && onInventoryChange());
       sock.on('furni:used', (d) => onFurniUsed && onFurniUsed(d));
+      sock.on('furni:dice', (d) => { setBubbles(b => ({ ...b, [me]: { text: '🎲 ' + d.value, at: Date.now() } })); setTimeout(() => setBubbles(b => { const c = { ...b }; if (c[me] && Date.now() - c[me].at >= 4800) delete c[me]; return c; }), 5000); });
+      sock.on('furni:teleport', (d) => { myPos.current = { x: d.x, y: d.y, dir: myPos.current.dir }; setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: d.x, y: d.y, sit: false, walking: false, dance: 0 } })); sockRef.current?.emit('player:move', { x: d.x, y: d.y, dir: myPos.current.dir, sit: false }); });
       sock.on('chat:msg', (m) => {
         setChat(s => [...s.slice(-40), m]);
         setBubbles(b => ({ ...b, [m.login]: { text: m.text, at: Date.now() } }));

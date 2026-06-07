@@ -16,6 +16,7 @@ export default function Home() {
   const [toast, setToast] = useState(null);
   const [status, setStatus] = useState(null);
   const [visitRoom, setVisitRoom] = useState(null);
+  const [editLook, setEditLook] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -48,9 +49,10 @@ export default function Home() {
 
   return (
     <>
-      <TopBar me={me} onSync={sync} onLogout={() => supabase.auth.signOut()} view={view} setView={setView} />
+      <TopBar me={me} onSync={sync} onLogout={() => supabase.auth.signOut()} view={view} setView={setView} onEditLook={() => setEditLook(true)} />
+      {editLook && <AvatarEditor me={me} onClose={() => setEditLook(false)} onSaved={(look) => { setMe(m => ({ ...m, look })); setEditLook(false); showToast('Visual salvo! 👕'); }} />}
       <main style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 16px 60px' }}>
-        {view === 'home' && <HomeView me={me} setView={setView} />}
+        {view === 'home' && <HomeView me={me} setView={setView} onVisit={visit} />}
         {view === 'navigator' && <NavigatorView me={me} onVisit={visit} />}
         {view === 'hotel' && <HotelView me={me} setMe={setMe} showToast={showToast} visitRoom={visitRoom} setVisitRoom={setVisitRoom} />}
         {view === 'catalog' && <CatalogView me={me} setMe={setMe} showToast={showToast} />}
@@ -64,7 +66,7 @@ export default function Home() {
 
 const Center = ({ children }) => <div style={{ minHeight: '100vh', display: 'grid', placeContent: 'center', textAlign: 'center', padding: 20 }}><div style={{ maxWidth: 480 }}>{children}</div></div>;
 
-function TopBar({ me, onSync, onLogout, view, setView }) {
+function TopBar({ me, onSync, onLogout, view, setView, onEditLook }) {
   const tabs = [['home', '🏠 Início'], ['navigator', '🚪 Quartos'], ['hotel', '🏨 Meu Quarto'], ['catalog', '🛒 Catálogo'], ['bag', '🛍️ Sacola'], ['top', '🏆 Ranking']];
   return (
     <div className="hb-top">
@@ -75,21 +77,67 @@ function TopBar({ me, onSync, onLogout, view, setView }) {
         </nav>
         <span className="hb-pill" style={{ color: 'var(--hb-yellow)' }}>🪙 {me.coins ?? 0}</span>
         <button className="hb-btn hb-btn-blue hb-btn-sm" onClick={onSync}>↻ Sync GitHub</button>
-        <img src={HEAD(me.look)} alt="" style={{ height: 40, imageRendering: 'pixelated' }} />
+        <img src={HEAD(me.look)} alt="" title="Editar visual" onClick={onEditLook} style={{ height: 40, imageRendering: 'pixelated', cursor: 'pointer' }} />
         <span style={{ fontWeight: 700 }}>{me.github_login}</span>
+        <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={onEditLook}>👕 Visual</button>
         <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={onLogout}>Sair</button>
       </div>
     </div>
   );
 }
 
-function HomeView({ me, setView }) {
+const PRESET_LOOKS = [
+  'hd-180-1.ch-255-66.lg-280-110.sh-305-62.hr-828-61',
+  'hd-180-2.ch-3030-1408.lg-275-1408.sh-290-64.hr-100-61',
+  'hd-185-3.ch-665-92.lg-700-82.sh-705-62.hr-115-45.ha-1003-70',
+  'hd-180-1.ch-235-1408.lg-275-64.sh-300-64.hr-3163-61.he-1602',
+  'hd-209-7.ch-255-82.lg-280-82.sh-305-92.hr-831-49',
+  'hd-180-1.ch-3110-66-1408.lg-280-110.sh-906-92.hr-681-45',
+  'hd-185-2.ch-3001-92.lg-3116-92.sh-3068-92.hr-125-40.ea-1401',
+  'hd-180-1.ch-210-66.lg-270-82.sh-290-80.hr-170-61.ha-1012-90',
+  'hd-180-10.ch-267-1408.lg-285-64.sh-300-62.hr-155-31',
+  'hd-600-1.ch-635-1408.lg-716-64.sh-735-62.hr-545-31.ha-1017-1408',
+  'hd-600-2.ch-665-66.lg-695-82.sh-725-92.hr-500-45.ea-1404',
+  'hd-180-1.ch-3334-66-1408.lg-3023-110.sh-3035-62.hr-3278-45.fa-1206',
+];
+
+function AvatarEditor({ me, onClose, onSaved }) {
+  const [look, setLook] = useState(me.look);
+  async function save() { const r = await api('/look', { method: 'POST', body: JSON.stringify({ look }) }); if (r.ok) onSaved(r.look); }
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'grid', placeItems: 'center', zIndex: 6000 }}>
+      <div onClick={e => e.stopPropagation()} className="hb-card" style={{ width: 560, maxWidth: '94vw' }}>
+        <div className="hb-card-head" style={{ justifyContent: 'space-between' }}><span>👕 Editar personagem</span><button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={onClose}>✕</button></div>
+        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '160px 1fr', gap: 16 }}>
+          <div style={{ textAlign: 'center', background: 'linear-gradient(180deg,#1b3b5a,#0e2638)', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 10 }}>
+            <img src={BODY(look)} alt="" style={{ height: 130, imageRendering: 'pixelated' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--hb-muted)', marginBottom: 6 }}>Escolha um visual:</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(54px,1fr))', gap: 6, maxHeight: 150, overflowY: 'auto' }}>
+              {PRESET_LOOKS.map((l, i) => (
+                <div key={i} onClick={() => setLook(l)} style={{ cursor: 'pointer', borderRadius: 8, border: look === l ? '2px solid var(--hb-yellow)' : '2px solid var(--hb-border)', background: '#0e2638', display: 'grid', placeItems: 'center', height: 64, overflow: 'hidden' }}>
+                  <img src={HEAD(l, 'l')} alt="" style={{ height: 56, imageRendering: 'pixelated' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--hb-muted)', margin: '12px 0 4px' }}>Ou cole um código de figura do Habbo:</div>
+            <input className="hb-input" value={look} onChange={e => setLook(e.target.value)} />
+            <button className="hb-btn" style={{ marginTop: 12, width: '100%' }} onClick={save}>Salvar visual</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeView({ me, setView, onVisit }) {
   const [articles, setArticles] = useState([]);
   const [online, setOnline] = useState(0);
   useEffect(() => { fetch(`${API}/articles`).then(r => r.json()).then(setArticles); fetch(`${API}/online`).then(r => r.json()).then(d => setOnline(d.online)); }, []);
   return (
     <>
-      <HotelFront me={me} online={online} setView={setView} />
+      <HotelFront me={me} online={online} setView={setView} onVisit={onVisit} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
       <div className="hb-card"><div className="hb-card-head">📰 Últimas notícias do hotel</div>
         <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: 14 }}>
@@ -113,7 +161,7 @@ function HomeView({ me, setView }) {
   );
 }
 
-function HotelFront({ me, online, setView }) {
+function HotelFront({ me, online, setView, onVisit }) {
   const cols = 9, rows = 4;
   const win = [];
   for (let i = 0; i < cols * rows; i++) win.push(Math.random() < 0.55);
@@ -147,36 +195,49 @@ function HotelFront({ me, online, setView }) {
           <div style={{ fontWeight: 800, fontSize: 18 }}>Bem-vindo ao GitHotel 🏨</div>
           <div style={{ color: 'var(--hb-muted)', fontSize: 13 }}>🟢 {online} devs online agora</div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="hb-btn" onClick={() => setView('hotel')}>Entrar no meu quarto</button>
-          <button className="hb-btn hb-btn-blue" onClick={() => setView('navigator')}>🚪 Ver quartos</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="hb-btn" onClick={() => onVisit('lobby')}>🏨 Entrar no Lobby</button>
+          <button className="hb-btn hb-btn-blue" onClick={() => setView('hotel')}>Meu quarto</button>
+          <button className="hb-btn hb-btn-ghost" onClick={() => setView('navigator')}>🚪 Ver quartos</button>
         </div>
       </div>
     </div>
   );
 }
 
+const ROOM_ICON = { lobby: '🛎️', cafe: '☕', games: '🎮' };
 function NavigatorView({ me, onVisit }) {
-  const [rooms, setRooms] = useState([]);
-  useEffect(() => { fetch(`${API}/rooms`).then(r => r.json()).then(setRooms); }, []);
+  const [data, setData] = useState({ official: [], user: [] });
+  useEffect(() => { fetch(`${API}/rooms`).then(r => r.json()).then(d => setData(d.official ? d : { official: [], user: d })); }, []);
   return (
-    <div className="hb-card">
-      <div className="hb-card-head">🚪 Quartos do hotel — visite outros devs</div>
-      <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 14 }}>
-        <div className="hb-card" style={{ padding: 14, textAlign: 'center', cursor: 'pointer', border: '2px solid var(--hb-yellow)' }} onClick={() => onVisit(me.github_login)}>
-          <img src={BODY(me.look)} alt="" style={{ height: 80, imageRendering: 'pixelated' }} />
-          <div style={{ fontWeight: 700, marginTop: 4 }}>Meu quarto</div>
+    <>
+      <div className="hb-card" style={{ marginBottom: 20 }}>
+        <div className="hb-card-head">🏨 Salas oficiais do hotel</div>
+        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 14 }}>
+          {data.official.map(r => (
+            <div key={r.slug} className="hb-card" style={{ padding: 0, overflow: 'hidden', cursor: 'pointer' }} onClick={() => onVisit(r.slug)}>
+              <div style={{ height: 90, background: 'linear-gradient(135deg,#2a6390,#3a8fd4)', display: 'grid', placeItems: 'center', fontSize: 40 }}>{ROOM_ICON[r.slug] || '🚪'}</div>
+              <div style={{ padding: 12 }}><div style={{ fontWeight: 800 }}>{r.name}</div><div style={{ fontSize: 12, color: 'var(--hb-muted)' }}>{r.descr}</div></div>
+            </div>
+          ))}
         </div>
-        {rooms.filter(r => r.github_login !== me.github_login).map(r => (
-          <div key={r.github_login} className="hb-card" style={{ padding: 14, textAlign: 'center', cursor: 'pointer' }} onClick={() => onVisit(r.github_login)}>
-            <img src={BODY(r.look || 'hd-180-1.ch-255-66.lg-280-110')} alt="" style={{ height: 80, imageRendering: 'pixelated' }} />
-            <div style={{ fontWeight: 700, marginTop: 4 }}>@{r.github_login}</div>
-            <div style={{ fontSize: 12, color: 'var(--hb-muted)' }}>🛋️ {r.items} mobis</div>
-          </div>
-        ))}
-        {rooms.length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Ninguém decorou quarto ainda. Seja o primeiro!</p>}
       </div>
-    </div>
+      <div className="hb-card">
+        <div className="hb-card-head">🚪 Quartos dos devs</div>
+        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(170px,1fr))', gap: 14 }}>
+          <div className="hb-card" style={{ padding: 14, textAlign: 'center', cursor: 'pointer', border: '2px solid var(--hb-yellow)' }} onClick={() => onVisit(me.github_login)}>
+            <img src={BODY(me.look)} alt="" style={{ height: 78, imageRendering: 'pixelated' }} /><div style={{ fontWeight: 700, marginTop: 4 }}>Meu quarto</div>
+          </div>
+          {data.user.filter(r => r.github_login !== me.github_login).map(r => (
+            <div key={r.github_login} className="hb-card" style={{ padding: 14, textAlign: 'center', cursor: 'pointer' }} onClick={() => onVisit(r.github_login)}>
+              <img src={BODY(r.look || 'hd-180-1.ch-255-66.lg-280-110')} alt="" style={{ height: 78, imageRendering: 'pixelated' }} />
+              <div style={{ fontWeight: 700, marginTop: 4 }}>@{r.github_login}</div>
+              <div style={{ fontSize: 12, color: 'var(--hb-muted)' }}>🛋️ {r.items} mobis</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

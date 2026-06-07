@@ -106,15 +106,38 @@ app.get('/inventory', authMiddleware, async (req, res) => {
   res.json(data || []);
 });
 
-app.get('/room/:login', async (req, res) => {
+app.get('/room/:key', async (req, res) => {
+  const key = req.params.key;
+  // sala oficial?
+  const { data: room } = await db.from('rooms').select('*').eq('slug', key).maybeSingle();
+  if (room) {
+    const { data: items } = await db.from('official_room_items')
+      .select('id, furniture_id, x, y, rotation, furniture(sprite, width, height, name, fn, fn_params)')
+      .eq('room_slug', key);
+    return res.json({
+      owner: { github_login: key, official: true, room_floor: room.floor, room_wall: room.wall },
+      room: { name: room.name, descr: room.descr, w: room.w, h: room.h, official: true },
+      items: items || [],
+    });
+  }
+  // quarto pessoal
   const { data: owner } = await db.from('profiles')
     .select('id, github_login, avatar_url, coins, look, room_floor, room_wall')
-    .eq('github_login', req.params.login).single();
+    .eq('github_login', key).maybeSingle();
   if (!owner) return res.status(404).json({ error: 'not_found' });
   const { data: items } = await db.from('room_items')
     .select('id, furniture_id, x, y, rotation, furniture(sprite, width, height, name, fn, fn_params)')
     .eq('user_id', owner.id);
-  res.json({ owner: { ...owner, look: owner.look || DEFAULT_LOOK }, items: items || [] });
+  res.json({ owner: { ...owner, look: owner.look || DEFAULT_LOOK }, room: { name: `Quarto de ${owner.github_login}`, w: 11, h: 11 }, items: items || [] });
+});
+
+// Salvar visual do personagem
+app.post('/look', authMiddleware, async (req, res) => {
+  const profile = await getOrCreateProfile(req.user);
+  const look = String((req.body || {}).look || '').slice(0, 200).trim();
+  if (!look) return res.json({ ok: false });
+  await db.from('profiles').update({ look }).eq('id', profile.id);
+  res.json({ ok: true, look });
 });
 
 app.get('/leaderboard', async (_req, res) => {
@@ -190,10 +213,11 @@ app.post('/redeem', authMiddleware, async (req, res) => {
   res.json(data);
 });
 
-// ---------- Navegador de quartos publicos ----------
+// ---------- Navegador de quartos (oficiais + dos devs) ----------
 app.get('/rooms', async (_req, res) => {
-  const { data } = await db.rpc('public_rooms');
-  res.json(data || []);
+  const { data: official } = await db.from('rooms').select('slug, name, descr, w, h, floor, sort').order('sort');
+  const { data: user } = await db.rpc('public_rooms');
+  res.json({ official: official || [], user: user || [] });
 });
 
 // Quem esta online agora (presenca via sockets)
@@ -297,8 +321,10 @@ io.on('connection', async (socket) => {
 
   // usar furni interativo (ex: GitCoin machine) — credita quem clicou
   socket.on('furni:use', async ({ id }) => {
-    const { data: ri } = await db.from('room_items')
-      .select('furniture_id, furniture(fn, fn_params, name)').eq('id', id).single();
+    let { data: ri } = await db.from('room_items')
+      .select('furniture_id, furniture(fn, fn_params, name)').eq('id', id).maybeSingle();
+    if (!ri) ({ data: ri } = await db.from('official_room_items')
+      .select('furniture_id, furniture(fn, fn_params, name)').eq('id', id).maybeSingle());
     if (!ri || !ri.furniture?.fn) return;
     if (ri.furniture.fn === 'coin_machine') {
       const amount = Number(ri.furniture.fn_params?.amount) || 5;

@@ -284,7 +284,8 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
 
         {/* popover do furni selecionado */}
         {selItem && canEdit && (
-          <div style={{ position: 'absolute', left: pan.x + (ORIGIN.x + selScreen.sx) * zoom, top: pan.y + (ORIGIN.y + selScreen.sy - 70) * zoom, transform: 'translateX(-50%)', zIndex: 3000, display: 'flex', gap: 6, background: '#0c2236', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 6 }}>
+          <div onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
+            style={{ position: 'absolute', left: pan.x + (ORIGIN.x + selScreen.sx) * zoom, top: pan.y + (ORIGIN.y + selScreen.sy - 70) * zoom, transform: 'translateX(-50%)', zIndex: 3000, display: 'flex', gap: 6, background: '#0c2236', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 6 }}>
             {selItem.furniture?.fn && <button className="hb-btn hb-btn-sm" onClick={() => sockRef.current?.emit('furni:use', { id: selected })}>⚡ Usar</button>}
             <button className="hb-btn hb-btn-sm hb-btn-blue" onClick={rotateSel}>↻ Girar</button>
             <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={pickupSel}>📦 Guardar</button>

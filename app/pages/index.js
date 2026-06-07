@@ -88,7 +88,9 @@ function HomeView({ me, setView }) {
   const [online, setOnline] = useState(0);
   useEffect(() => { fetch(`${API}/articles`).then(r => r.json()).then(setArticles); fetch(`${API}/online`).then(r => r.json()).then(d => setOnline(d.online)); }, []);
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
+    <>
+      <HotelFront me={me} online={online} setView={setView} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
       <div className="hb-card"><div className="hb-card-head">📰 Últimas notícias do hotel</div>
         <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: 14 }}>
           {articles.map(a => (<div key={a.id} className="hb-card news-card"><div className="cover">{a.cover_url && <img src={a.cover_url} alt="" />}</div><div className="body"><h4>{a.title}</h4><p>{a.excerpt}</p></div></div>))}
@@ -105,6 +107,50 @@ function HomeView({ me, setView }) {
           </div>
         </div>
         <div className="hb-card"><div className="hb-card-head">🟢 Online agora</div><div style={{ padding: 16, fontSize: 28, fontWeight: 800, textAlign: 'center' }}>{online} <span style={{ fontSize: 13, color: 'var(--hb-muted)', fontWeight: 400 }}>devs no hotel</span></div></div>
+      </div>
+      </div>
+    </>
+  );
+}
+
+function HotelFront({ me, online, setView }) {
+  const cols = 9, rows = 4;
+  const win = [];
+  for (let i = 0; i < cols * rows; i++) win.push(Math.random() < 0.55);
+  return (
+    <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', marginBottom: 20, border: '2px solid var(--hb-border)',
+      background: 'linear-gradient(180deg,#0b1f33 0%,#13314c 55%,#16324a 100%)', minHeight: 240 }}>
+      {/* céu + nuvens */}
+      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(600px 200px at 80% -60px,#2a5f8f,transparent 70%)' }} />
+      {/* prédio */}
+      <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', paddingTop: 26 }}>
+        <div style={{ width: 360, background: 'linear-gradient(180deg,#3a8fd4,#2a6390)', borderRadius: '10px 10px 0 0', padding: '14px 16px 0', boxShadow: '0 0 0 4px #1f4f7a, 0 12px 30px rgba(0,0,0,.4)' }}>
+          {/* letreiro */}
+          <div style={{ textAlign: 'center', marginBottom: 12 }}>
+            <span className="hb-logo" style={{ fontSize: 22, color: 'var(--hb-yellow)' }}>GitHotel</span>
+          </div>
+          {/* janelas */}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 6, marginBottom: 0 }}>
+            {win.map((on, i) => (
+              <div key={i} style={{ height: 22, borderRadius: 3, background: on ? '#ffd964' : '#16324a', boxShadow: on ? '0 0 6px #ffd96488' : 'none', border: '1px solid #1f4f7a' }} />
+            ))}
+          </div>
+          {/* porta */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>
+            <div style={{ width: 70, height: 44, background: 'linear-gradient(180deg,#ffd964,#e0a92f)', borderRadius: '8px 8px 0 0', display: 'grid', placeItems: 'center', fontSize: 22 }}>🚪</div>
+          </div>
+        </div>
+      </div>
+      {/* overlay info + ações */}
+      <div style={{ position: 'absolute', left: 20, bottom: 16, right: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 18 }}>Bem-vindo ao GitHotel 🏨</div>
+          <div style={{ color: 'var(--hb-muted)', fontSize: 13 }}>🟢 {online} devs online agora</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="hb-btn" onClick={() => setView('hotel')}>Entrar no meu quarto</button>
+          <button className="hb-btn hb-btn-blue" onClick={() => setView('navigator')}>🚪 Ver quartos</button>
+        </div>
       </div>
     </div>
   );

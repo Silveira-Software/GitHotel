@@ -63,7 +63,7 @@ app.get('/shop', async (req, res) => {
   const to = from + limit - 1;
 
   let query = db.from('furniture')
-    .select('id, name, category, price, sprite, width, height, item_type, rare', { count: 'exact' })
+    .select('id, name, category, price, sprite, width, height, item_type, rare, description', { count: 'exact' })
     .eq('active', true);
 
   if (q) query = query.ilike('name', `%${q}%`);
@@ -254,10 +254,11 @@ io.on('connection', async (socket) => {
     const players = sockets.map((s) => ({
       login: s.data.login, look: s.data.look, x: s.data.x ?? 5, y: s.data.y ?? 5,
       dir: s.data.dir ?? 2, dance: s.data.dance || 0, sit: s.data.sit || false,
+      action: s.data.action || 'std', gesture: s.data.gesture || 'nrm',
     }));
     socket.emit('room:players', players);
     socket.to(roomLogin).emit('player:enter', {
-      login: profile.github_login, look: socket.data.look, x: 5, y: 5, dir: 2, dance: 0, sit: false,
+      login: profile.github_login, look: socket.data.look, x: 5, y: 5, dir: 2, dance: 0, sit: false, action: 'std', gesture: 'nrm',
     });
   });
 
@@ -270,11 +271,13 @@ io.on('connection', async (socket) => {
       socket.to(socket.data.room).emit('player:move', { login: profile.github_login, x, y, dir: socket.data.dir, sit: socket.data.sit });
   });
 
-  // dança / gesto
-  socket.on('player:dance', ({ dance }) => {
-    socket.data.dance = Number(dance) || 0;
+  // poses: action (wav/respect/lay/std), gesture (sml/sad/agr/srp/nrm), dance (0-4)
+  socket.on('player:pose', ({ action, gesture, dance }) => {
+    if (action !== undefined) socket.data.action = action;
+    if (gesture !== undefined) socket.data.gesture = gesture;
+    if (dance !== undefined) socket.data.dance = Number(dance) || 0;
     if (socket.data.room)
-      socket.to(socket.data.room).emit('player:dance', { login: profile.github_login, dance: socket.data.dance });
+      socket.to(socket.data.room).emit('player:pose', { login: profile.github_login, action: socket.data.action, gesture: socket.data.gesture, dance: socket.data.dance });
   });
 
   // editor de piso/parede (só o dono do quarto)

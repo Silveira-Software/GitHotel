@@ -342,18 +342,27 @@ function CatalogView({ me, setMe, showToast }) {
       </div>
 
       {buying && (
-        <div onClick={() => setBuying(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'grid', placeItems: 'center', zIndex: 4000 }}>
-          <div onClick={e => e.stopPropagation()} className="hb-card" style={{ width: 360, maxWidth: '92vw' }}>
-            <div className="hb-card-head" style={{ justifyContent: 'space-between' }}><span>{buying.name}</span><button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setBuying(null)}>✕</button></div>
-            <div style={{ padding: 16 }}>
-              <Furni3DView cls={classFromSprite(buying.sprite)} size={190} />
-              <div style={{ textAlign: 'center', margin: '12px 0' }}>
-                <div style={{ color: 'var(--hb-muted)', fontSize: 12 }}>{buying.category}{buying.rare ? ' · RARO' : ''}</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--hb-yellow)' }}>🪙 {buying.price}</div>
+        <div onClick={() => setBuying(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', display: 'grid', placeItems: 'center', zIndex: 4000 }}>
+          <div onClick={e => e.stopPropagation()} className="hb-card" style={{ width: 540, maxWidth: '94vw' }}>
+            <div className="hb-card-head" style={{ justifyContent: 'space-between' }}>
+              <span>{buying.rare && <span className="rare-tag" style={{ position: 'static', marginRight: 6 }}>RARO</span>}{buying.name}</span>
+              <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setBuying(null)}>✕</button>
+            </div>
+            <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '210px 1fr', gap: 16 }}>
+              <Furni3DView cls={classFromSprite(buying.sprite)} size={200} />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div style={{ color: 'var(--hb-muted)', fontSize: 13, marginBottom: 8 }}>{buying.description || 'Um mobi clássico do hotel.'}</div>
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, color: 'var(--hb-muted)', marginBottom: 10 }}>
+                  <span>📂 {buying.category}</span><span>📐 {buying.width}×{buying.height}</span><span>{buying.item_type === 'wall' ? '🖼️ parede' : '🟫 chão'}</span>
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--hb-muted)' }}>Gire o mobi nos botões abaixo do preview 👈</div>
+                <div style={{ flex: 1 }} />
+                <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--hb-yellow)', margin: '8px 0' }}>🪙 {buying.price}</div>
+                <div style={{ fontSize: 12, color: 'var(--hb-muted)', marginBottom: 8 }}>Seu saldo: 🪙 {me.coins}</div>
+                <button className="hb-btn" style={{ width: '100%', fontSize: 15 }} disabled={me.coins < buying.price} onClick={() => confirmBuy(buying)}>
+                  {me.coins < buying.price ? 'Moedas insuficientes' : '✅ Confirmar compra'}
+                </button>
               </div>
-              <button className="hb-btn" style={{ width: '100%' }} disabled={me.coins < buying.price} onClick={() => confirmBuy(buying)}>
-                {me.coins < buying.price ? 'Moedas insuficientes' : 'Confirmar compra'}
-              </button>
             </div>
           </div>
         </div>

@@ -20,9 +20,9 @@ export const WALLS = {
   wall_green: { c: '#5a8a6a', d: '#4c7659', name: 'Verde' }, wall_pink: { c: '#c98aa6', d: '#b87a95', name: 'Rosa' },
 };
 
-const AV = (look, { dir = 2, action = 'std', dance = 0, gif = false } = {}) => {
+const AV = (look, { dir = 2, action = 'std', dance = 0, gesture = 'std', gif = false } = {}) => {
   let a = dance > 0 ? 'dance' : action;
-  const p = [`figure=${encodeURIComponent(look)}`, `size=l`, `direction=${dir}`, `head_direction=${dir}`, `action=${a}`, dance > 0 ? `dance=${dance}` : '', `gesture=std`, gif ? `img_format=gif` : ''].filter(Boolean).join('&');
+  const p = [`figure=${encodeURIComponent(look)}`, `size=l`, `direction=${dir}`, `head_direction=${dir}`, `action=${a}`, dance > 0 ? `dance=${dance}` : '', `gesture=${gesture || 'std'}`, gif ? `img_format=gif` : ''].filter(Boolean).join('&');
   return `https://www.habbo.com/habbo-imaging/avatarimage?${p}`;
 };
 function toScreen(gx, gy) { return { sx: (gx - gy) * (TILE_W / 2), sy: (gx + gy) * (TILE_H / 2) }; }
@@ -91,7 +91,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
         clearTimeout(otherWalkTimers.current[p.login]);
         if (!p.sit) otherWalkTimers.current[p.login] = setTimeout(() => setPlayers(s => s[p.login] ? ({ ...s, [p.login]: { ...s[p.login], walking: false } }) : s), 430);
       });
-      sock.on('player:dance', (p) => setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), dance: p.dance } })));
+      sock.on('player:pose', (p) => setPlayers(s => ({ ...s, [p.login]: { ...(s[p.login] || {}), action: p.action, gesture: p.gesture, dance: p.dance } })));
       sock.on('player:leave', (p) => setPlayers(s => { const c = { ...s }; delete c[p.login]; return c; }));
       sock.on('room:placed', (it) => setItems(s => [...s.filter(i => i.id !== it.id), it]));
       sock.on('room:removed', ({ id }) => { setItems(s => s.filter(i => i.id !== id)); setSelected(sel => sel === id ? null : sel); });
@@ -160,6 +160,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
   const walkTo = useCallback((tx, ty, sitDir = null) => {
     const cur = myPos.current; const path = findPath(cur.x, cur.y, tx, ty); if (!path) return;
     pathRef.current = path.slice(1); clearInterval(walkTimer.current);
+    if (sitDir == null) { setMyDance(0); sockRef.current?.emit('player:pose', { action: 'std', dance: 0 }); }
     const finish = () => {
       if (sitDir != null) {
         myPos.current = { x: tx, y: ty, dir: sitDir };
@@ -172,7 +173,7 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
       if (!next) { clearInterval(walkTimer.current); finish(); return; }
       const c = myPos.current, dir = dirFrom(Math.sign(next.x - c.x), Math.sign(next.y - c.y));
       myPos.current = { x: next.x, y: next.y, dir };
-      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: next.x, y: next.y, dir, walking: true, sit: false, dance: 0 } }));
+      setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), login: me, look: myLook, x: next.x, y: next.y, dir, walking: true, sit: false, dance: 0, action: 'std' } }));
       sockRef.current?.emit('player:move', { x: next.x, y: next.y, dir, sit: false });
     };
     tick(); walkTimer.current = setInterval(tick, 360);
@@ -206,7 +207,18 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
 
   function rotateSel() { const it = items.find(i => i.id === selected); if (!it) return; const model = getModel(classFromSprite(it.furniture?.sprite)); const dirs = (model && model.ok && model.frames?.dirs?.length) ? model.frames.dirs : [0, 2, 4, 6]; const cur = it.rotation ?? 2; const next = dirs[(dirs.indexOf(cur) + 1) % dirs.length]; setItems(s => s.map(i => i.id === it.id ? { ...i, rotation: next } : i)); sockRef.current?.emit('room:rotate', { id: it.id, rotation: next }); }
   function pickupSel() { sockRef.current?.emit('room:pickup', { id: selected }); setSelected(null); }
-  function doDance(n) { const d = myDance === n ? 0 : n; setMyDance(d); setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), dance: d, walking: false } })); sockRef.current?.emit('player:dance', { dance: d }); }
+  function doDance(n) { const d = myDance === n ? 0 : n; setMyDance(d); setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), dance: d, action: 'std', sit: false, walking: false } })); sockRef.current?.emit('player:pose', { dance: d, action: 'std' }); }
+  function doAction(a, transient) {
+    setMyDance(0);
+    setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), action: a, dance: 0, sit: false, walking: false } }));
+    sockRef.current?.emit('player:pose', { action: a, dance: 0 });
+    if (transient) setTimeout(() => { setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), action: 'std' } })); sockRef.current?.emit('player:pose', { action: 'std' }); }, 2600);
+  }
+  function doGesture(g) {
+    setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), gesture: g } }));
+    sockRef.current?.emit('player:pose', { gesture: g });
+    setTimeout(() => { setPlayers(s => ({ ...s, [me]: { ...(s[me] || {}), gesture: 'std' } })); sockRef.current?.emit('player:pose', { gesture: 'std' }); }, 3000);
+  }
   function setDecor(kind, id) { if (kind === 'floor') setFloor(id); else setWall(id); sockRef.current?.emit('room:decor', { [kind]: id }); }
 
   const meState = players[me] || { x: myPos.current.x, y: myPos.current.y, dir: 4, dance: myDance, walking: false, look: myLook };
@@ -221,8 +233,15 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
         <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setZoom(z => Math.min(2.4, z + 0.15))}>🔍+</button>
         <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => setZoom(z => Math.max(0.4, z - 0.15))}>🔍−</button>
         <button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={() => fitView()}>⛶ ver tudo</button>
-        <span style={{ width: 8 }} /><span style={{ fontSize: 12, color: 'var(--hb-muted)' }}>Dançar:</span>
-        {[1, 2, 3, 4].map(n => (<button key={n} className={'hb-btn hb-btn-sm ' + (myDance === n ? '' : 'hb-btn-ghost')} onClick={() => doDance(n)}>💃{n}</button>))}
+        <span style={{ width: 8 }} />
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Acenar" onClick={() => doAction('wav', true)}>👋</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Respeito" onClick={() => doAction('respect', true)}>✊</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Deitar" onClick={() => doAction(meState.action === 'lay' ? 'std' : 'lay', false)}>🛌</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Sorrir" onClick={() => doGesture('sml')}>😀</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Triste" onClick={() => doGesture('sad')}>😢</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Bravo" onClick={() => doGesture('agr')}>😠</button>
+        <button className="hb-btn hb-btn-sm hb-btn-ghost" title="Surpreso" onClick={() => doGesture('srp')}>😲</button>
+        {[1, 2, 3, 4].map(n => (<button key={n} className={'hb-btn hb-btn-sm ' + (myDance === n ? '' : 'hb-btn-ghost')} title={'Dança ' + n} onClick={() => doDance(n)}>💃{n}</button>))}
         {canEdit && <button className={'hb-btn hb-btn-sm ' + (editor ? '' : 'hb-btn-blue')} style={{ marginLeft: 'auto' }} onClick={() => setEditor(e => !e)}>🎨 Piso/Parede</button>}
       </div>
 
@@ -243,8 +262,9 @@ export default function IsoRoom({ roomLogin, placingItem, onPlaced, onInventoryC
             const { sx, sy } = toScreen(p.x ?? 2, p.y ?? 2); const cx = ORIGIN.x + sx, cy = ORIGIN.y + sy + TILE_H / 2;
             const sitting = !!p.sit;
             const moving = p.walking && !sitting, dancing = (p.dance || 0) > 0 && !sitting;
-            const action = sitting ? 'sit' : (moving ? 'wlk' : 'std');
-            const url = AV(p.look || myLook, { dir: p.dir ?? 4, action, dance: dancing ? p.dance : 0, gif: moving || dancing });
+            const baseAct = sitting ? 'sit' : (moving ? 'wlk' : (p.action || 'std'));
+            const emoting = baseAct === 'wav' || baseAct === 'respect';
+            const url = AV(p.look || myLook, { dir: p.dir ?? 4, action: baseAct, gesture: p.gesture || 'std', dance: dancing ? p.dance : 0, gif: moving || dancing || emoting });
             const bubble = bubbles[p.login];
             return (
               <div key={p.login} style={{ position: 'absolute', left: cx, top: cy, width: 0, height: 0, transition: 'left .36s linear, top .36s linear', zIndex: 1000 + Math.round((p.x + p.y) * 10) }}>

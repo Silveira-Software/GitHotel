@@ -103,29 +103,72 @@ const PRESET_LOOKS = [
   'hd-180-1.ch-3334-66-1408.lg-3023-110.sh-3035-62.hr-3278-45.fa-1206',
 ];
 
+const SKIN = [{ id: 1, hex: '#F5DCB1' }, { id: 2, hex: '#FFD0A6' }, { id: 3, hex: '#F2AF88' }, { id: 4, hex: '#C98F66' }, { id: 5, hex: '#8C5A3B' }, { id: 6, hex: '#5A3B2A' }];
+const HAIRC = [{ id: 45, hex: '#2d2926' }, { id: 61, hex: '#6b4a2b' }, { id: 40, hex: '#f0c419' }, { id: 42, hex: '#c7873b' }, { id: 31, hex: '#a0522d' }, { id: 21, hex: '#e8503a' }, { id: 49, hex: '#b03a2e' }, { id: 1407, hex: '#5b8fd4' }];
+const CLOTHC = [{ id: 1, hex: '#c9c9c9' }, { id: 3, hex: '#ffffff' }, { id: 92, hex: '#4a4a4a' }, { id: 61, hex: '#6b4a2b' }, { id: 100, hex: '#e8503a' }, { id: 104, hex: '#f0c419' }, { id: 106, hex: '#6abe30' }, { id: 143, hex: '#3a8fd4' }, { id: 96, hex: '#a371f7' }, { id: 1408, hex: '#222222' }];
+const SETS = {
+  hd: { label: '🧑 Rosto', head: true, req: true, ids: [180, 185, 190, 195, 200, 205, 206, 207, 208, 209, 3091, 3093, 3096], colors: SKIN },
+  hr: { label: '💇 Cabelo', head: true, ids: [0, 100, 105, 110, 115, 120, 125, 130, 140, 155, 165, 170, 500, 505, 515, 3090, 3162, 3163, 802, 828, 831], colors: HAIRC },
+  ha: { label: '🎩 Chapéu', head: true, ids: [0, 1001, 1002, 1003, 1004, 1009, 1010, 1012, 1013, 1014, 1017, 1018, 3110], colors: CLOTHC },
+  ea: { label: '👓 Óculos', head: true, ids: [0, 1401, 1402, 1403, 1404, 1405, 1406, 1408], colors: CLOTHC },
+  fa: { label: '🎭 Máscara', head: true, ids: [0, 1201, 1202, 1203, 1204, 1205, 1206, 1212], colors: CLOTHC },
+  ch: { label: '👕 Camisa', ids: [0, 210, 215, 220, 225, 230, 235, 240, 245, 255, 260, 3030, 3077, 3216, 667, 669, 3334], colors: CLOTHC },
+  cc: { label: '🧥 Casaco', ids: [0, 260, 3007, 3030, 3075, 3110, 3280], colors: CLOTHC },
+  lg: { label: '👖 Calça', ids: [270, 275, 280, 285, 695, 700, 705, 710, 715, 716, 3023, 3116], colors: CLOTHC },
+  sh: { label: '👟 Sapato', ids: [290, 295, 300, 305, 725, 730, 735, 740, 905, 906, 3068], colors: CLOTHC },
+};
+const ORDER = ['hd', 'hr', 'ch', 'cc', 'lg', 'sh', 'ha', 'ea', 'fa'];
+
+function parseLook(look) {
+  const parts = {};
+  (look || '').split('.').forEach(seg => { const [t, id, c] = seg.split('-'); if (t) parts[t] = { id: parseInt(id) || 0, c: parseInt(c) || 1 }; });
+  if (!parts.hd) parts.hd = { id: 180, c: 1 };
+  return parts;
+}
+function buildLook(parts) { return ORDER.filter(t => parts[t] && parts[t].id > 0).map(t => `${t}-${parts[t].id}-${parts[t].c}`).join('.') || 'hd-180-1'; }
+function partThumb(type, id, color, parts) {
+  const head = SETS[type].head;
+  const base = head ? `hd-${parts.hd.id}-${parts.hd.c}` : `hd-180-1.lg-270-1408`;
+  const fig = id > 0 ? `${base}.${type}-${id}-${color}` : base;
+  return `https://www.habbo.com/habbo-imaging/avatarimage?figure=${fig}&size=l&direction=2&head_direction=2${head ? '&headonly=1' : ''}&gesture=sml`;
+}
+
 function AvatarEditor({ me, onClose, onSaved }) {
-  const [look, setLook] = useState(me.look);
+  const [parts, setParts] = useState(() => parseLook(me.look));
+  const [cat, setCat] = useState('hr');
+  const look = buildLook(parts);
+  const set = SETS[cat];
+  function pick(id) { setParts(p => ({ ...p, [cat]: { id, c: p[cat]?.c || set.colors[0].id } })); }
+  function pickColor(c) { setParts(p => ({ ...p, [cat]: { id: p[cat]?.id ?? (set.req ? set.ids[0] : 0), c } })); }
   async function save() { const r = await api('/look', { method: 'POST', body: JSON.stringify({ look }) }); if (r.ok) onSaved(r.look); }
+  function randomize() { const np = {}; ORDER.forEach(t => { const s = SETS[t]; const ids = s.ids; const id = ids[Math.floor(Math.random() * ids.length)]; const c = s.colors[Math.floor(Math.random() * s.colors.length)].id; np[t] = { id, c }; }); np.hd.id = SETS.hd.ids[Math.floor(Math.random() * SETS.hd.ids.length)]; setParts(np); }
+  const cur = parts[cat] || { id: 0, c: set.colors[0].id };
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'grid', placeItems: 'center', zIndex: 6000 }}>
-      <div onClick={e => e.stopPropagation()} className="hb-card" style={{ width: 560, maxWidth: '94vw' }}>
-        <div className="hb-card-head" style={{ justifyContent: 'space-between' }}><span>👕 Editar personagem</span><button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={onClose}>✕</button></div>
-        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '160px 1fr', gap: 16 }}>
-          <div style={{ textAlign: 'center', background: 'linear-gradient(180deg,#1b3b5a,#0e2638)', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 10 }}>
-            <img src={BODY(look)} alt="" style={{ height: 130, imageRendering: 'pixelated' }} />
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', display: 'grid', placeItems: 'center', zIndex: 6000 }}>
+      <div onClick={e => e.stopPropagation()} className="hb-card" style={{ width: 720, maxWidth: '96vw' }}>
+        <div className="hb-card-head" style={{ justifyContent: 'space-between' }}><span>👕 Guarda-roupa</span><button className="hb-btn hb-btn-ghost hb-btn-sm" onClick={onClose}>✕</button></div>
+        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '170px 1fr', gap: 16 }}>
+          <div>
+            <div style={{ textAlign: 'center', background: 'linear-gradient(180deg,#1b3b5a,#0e2638)', border: '2px solid var(--hb-border)', borderRadius: 10, padding: 10 }}>
+              <img src={BODY(look)} alt="" style={{ height: 150, imageRendering: 'pixelated' }} />
+            </div>
+            <button className="hb-btn hb-btn-ghost hb-btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={randomize}>🎲 Aleatório</button>
+            <button className="hb-btn" style={{ width: '100%', marginTop: 6 }} onClick={save}>Salvar visual</button>
           </div>
           <div>
-            <div style={{ fontSize: 13, color: 'var(--hb-muted)', marginBottom: 6 }}>Escolha um visual:</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(54px,1fr))', gap: 6, maxHeight: 150, overflowY: 'auto' }}>
-              {PRESET_LOOKS.map((l, i) => (
-                <div key={i} onClick={() => setLook(l)} style={{ cursor: 'pointer', borderRadius: 8, border: look === l ? '2px solid var(--hb-yellow)' : '2px solid var(--hb-border)', background: '#0e2638', display: 'grid', placeItems: 'center', height: 64, overflow: 'hidden' }}>
-                  <img src={HEAD(l, 'l')} alt="" style={{ height: 56, imageRendering: 'pixelated' }} />
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
+              {Object.entries(SETS).map(([k, s]) => <button key={k} className={'hb-btn hb-btn-sm ' + (cat === k ? '' : 'hb-btn-ghost')} onClick={() => setCat(k)}>{s.label}</button>)}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+              {set.colors.map(c => <div key={c.id} onClick={() => pickColor(c.id)} title={'cor ' + c.id} style={{ width: 24, height: 24, borderRadius: '50%', background: c.hex, cursor: 'pointer', border: cur.c === c.id ? '3px solid var(--hb-yellow)' : '2px solid var(--hb-border)' }} />)}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(56px,1fr))', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
+              {set.ids.map(id => (
+                <div key={id} onClick={() => pick(id)} style={{ cursor: 'pointer', borderRadius: 8, border: cur.id === id ? '2px solid var(--hb-yellow)' : '2px solid var(--hb-border)', background: '#0e2638', display: 'grid', placeItems: 'center', height: 66, overflow: 'hidden' }}>
+                  {id === 0 ? <span style={{ fontSize: 11, color: 'var(--hb-muted)' }}>nenhum</span> : <img src={partThumb(cat, id, cur.c, parts)} alt="" loading="lazy" style={{ height: 60, imageRendering: 'pixelated' }} onError={e => e.target.style.opacity = .15} />}
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--hb-muted)', margin: '12px 0 4px' }}>Ou cole um código de figura do Habbo:</div>
-            <input className="hb-input" value={look} onChange={e => setLook(e.target.value)} />
-            <button className="hb-btn" style={{ marginTop: 12, width: '100%' }} onClick={save}>Salvar visual</button>
           </div>
         </div>
       </div>

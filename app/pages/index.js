@@ -56,6 +56,8 @@ export default function Home() {
         {view === 'navigator' && <NavigatorView me={me} onVisit={visit} />}
         {view === 'hotel' && <HotelView me={me} setMe={setMe} showToast={showToast} visitRoom={visitRoom} setVisitRoom={setVisitRoom} />}
         {view === 'catalog' && <CatalogView me={me} setMe={setMe} showToast={showToast} />}
+        {view === 'market' && <MarketView me={me} setMe={setMe} showToast={showToast} />}
+        {view === 'console' && <ConsoleView me={me} showToast={showToast} onVisit={visit} />}
         {view === 'bag' && <BagView me={me} setMe={setMe} showToast={showToast} />}
         {view === 'top' && <TopView me={me} onVisit={visit} />}
       </main>
@@ -67,7 +69,7 @@ export default function Home() {
 const Center = ({ children }) => <div style={{ minHeight: '100vh', display: 'grid', placeContent: 'center', textAlign: 'center', padding: 20 }}><div style={{ maxWidth: 480 }}>{children}</div></div>;
 
 function TopBar({ me, onSync, onLogout, view, setView, onEditLook }) {
-  const tabs = [['home', '🏠 Início'], ['navigator', '🚪 Quartos'], ['hotel', '🏨 Meu Quarto'], ['catalog', '🛒 Catálogo'], ['bag', '🛍️ Sacola'], ['top', '🏆 Ranking']];
+  const tabs = [['home', '🏠 Início'], ['navigator', '🚪 Quartos'], ['hotel', '🏨 Meu Quarto'], ['catalog', '🛒 Catálogo'], ['market', '🏪 Mercado'], ['bag', '🛍️ Sacola'], ['console', '💬 Amigos'], ['top', '🏆 Ranking']];
   return (
     <div className="hb-top">
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -424,6 +426,140 @@ function TopView({ me, onVisit }) {
           </div>
         ))}
         {top.length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Ninguém no ranking ainda.</p>}
+      </div>
+    </div>
+  );
+}
+
+function ConsoleView({ me, showToast, onVisit }) {
+  const [data, setData] = useState({ friends: [], requests: [], pending: [] });
+  const [add, setAdd] = useState('');
+  const [open, setOpen] = useState(null);
+  const [msgs, setMsgs] = useState([]);
+  const [text, setText] = useState('');
+  const load = useCallback(() => api('/friends').then(setData), []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!open) return;
+    const fetchMsgs = () => api(`/dms/${open}`).then(setMsgs);
+    fetchMsgs(); const t = setInterval(fetchMsgs, 2500); return () => clearInterval(t);
+  }, [open]);
+  async function sendReq() { if (!add.trim()) return; const r = await api('/friends/request', { method: 'POST', body: JSON.stringify({ login: add.trim() }) }); showToast(r.ok ? `Pedido enviado a @${add.trim()} 👥` : 'Usuário não encontrado', r.ok ? 'ok' : 'err'); setAdd(''); load(); }
+  async function accept(login) { await api('/friends/accept', { method: 'POST', body: JSON.stringify({ login }) }); showToast(`Agora vocês são amigos! 🎉`); load(); }
+  async function remove(login) { await api('/friends/remove', { method: 'POST', body: JSON.stringify({ login }) }); if (open === login) setOpen(null); load(); }
+  async function send() { if (!text.trim() || !open) return; await api('/dms', { method: 'POST', body: JSON.stringify({ to: open, body: text.trim() }) }); setText(''); api(`/dms/${open}`).then(setMsgs); }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
+      <div className="hb-card">
+        <div className="hb-card-head">👥 Amigos</div>
+        <div style={{ padding: 12 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            <input className="hb-input" placeholder="add por @login" value={add} onChange={e => setAdd(e.target.value)} />
+            <button className="hb-btn hb-btn-sm" onClick={sendReq}>+</button>
+          </div>
+          {data.requests.length > 0 && <div style={{ fontSize: 12, color: 'var(--hb-yellow)', margin: '6px 0' }}>Pedidos recebidos</div>}
+          {data.requests.map(u => (
+            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+              <img src={HEAD(u.look || '')} style={{ height: 28, imageRendering: 'pixelated' }} alt="" />
+              <span style={{ flex: 1, fontSize: 13 }}>{u.github_login}</span>
+              <button className="hb-btn hb-btn-sm" onClick={() => accept(u.github_login)}>aceitar</button>
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: 'var(--hb-muted)', margin: '10px 0 4px' }}>Meus amigos ({data.friends.length})</div>
+          {data.friends.length === 0 && <p style={{ color: 'var(--hb-muted)', fontSize: 13 }}>Adicione amigos pelo @login.</p>}
+          {data.friends.map(u => (
+            <div key={u.id} className={'cat-item' + (open === u.github_login ? ' active' : '')} onClick={() => setOpen(u.github_login)} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <img src={HEAD(u.look || '')} style={{ height: 28, imageRendering: 'pixelated' }} alt="" />
+              <span style={{ flex: 1 }}>{u.github_login}</span>
+              <span title="visitar quarto" onClick={(e) => { e.stopPropagation(); onVisit(u.github_login); }}>🚪</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="hb-card">
+        <div className="hb-card-head">💬 {open ? `Conversa com @${open}` : 'Mensagens'}</div>
+        <div style={{ padding: 12 }}>
+          {!open && <p style={{ color: 'var(--hb-muted)' }}>Selecione um amigo pra conversar.</p>}
+          {open && (
+            <>
+              <div style={{ height: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                {msgs.map(m => (
+                  <div key={m.id} style={{ alignSelf: m.mine ? 'flex-end' : 'flex-start', background: m.mine ? 'var(--hb-blue-d)' : '#1b3b5a', color: '#fff', padding: '6px 12px', borderRadius: 12, maxWidth: '70%', fontSize: 14 }}>{m.body}</div>
+                ))}
+                {msgs.length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Diga oi! 👋</p>}
+              </div>
+              <form style={{ display: 'flex', gap: 6 }} onSubmit={e => { e.preventDefault(); send(); }}>
+                <input className="hb-input" value={text} onChange={e => setText(e.target.value)} placeholder="Mensagem privada…" maxLength={500} />
+                <button className="hb-btn hb-btn-blue hb-btn-sm" type="submit">Enviar</button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketView({ me, setMe, showToast }) {
+  const [tab, setTab] = useState('buy');
+  const [listings, setListings] = useState([]);
+  const [mine, setMine] = useState([]);
+  const [inv, setInv] = useState([]);
+  const [price, setPrice] = useState({});
+  const loadAll = useCallback(() => { fetch(`${API}/market`).then(r => r.json()).then(setListings); api('/market/mine').then(setMine); api('/inventory').then(setInv); }, []);
+  useEffect(() => { loadAll(); }, [loadAll]);
+  async function buy(l) { const r = await api('/market/buy', { method: 'POST', body: JSON.stringify({ listing_id: l.id }) }); if (r.ok) { setMe(m => ({ ...m, coins: r.coins })); showToast(`Comprado: ${l.furniture?.name} 🪙-${l.price}`); loadAll(); } else showToast(r.error === 'insufficient_coins' ? 'Moedas insuficientes' : r.error === 'own' ? 'É seu próprio anúncio' : 'Indisponível', 'err'); }
+  async function sell(it) { const p = parseInt(price[it.furniture_id]) || 0; if (p < 1) return showToast('Defina um preço', 'err'); const r = await api('/market/list', { method: 'POST', body: JSON.stringify({ furniture_id: it.furniture_id, price: p }) }); if (r.ok) { showToast(`Anunciado por 🪙${p}!`); loadAll(); } else showToast('Erro ao anunciar', 'err'); }
+  async function cancel(l) { const r = await api('/market/cancel', { method: 'POST', body: JSON.stringify({ listing_id: l.id }) }); if (r.ok) { showToast('Anúncio cancelado, mobi voltou pra mochila'); loadAll(); } }
+  return (
+    <div className="hb-card">
+      <div className="hb-card-head" style={{ gap: 8 }}>
+        <span>🏪 Mercado</span>
+        <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+          {[['buy', 'Comprar'], ['sell', 'Vender'], ['mine', 'Meus anúncios']].map(([k, l]) => <button key={k} className={'hb-btn hb-btn-sm ' + (tab === k ? '' : 'hb-btn-ghost')} onClick={() => setTab(k)}>{l}</button>)}
+        </div>
+      </div>
+      <div style={{ padding: 16 }}>
+        {tab === 'buy' && (
+          <div className="furni-grid">
+            {listings.map(l => (
+              <div key={l.id} className="furni-cell" title={l.furniture?.name}>
+                {l.furniture?.rare && <span className="rare-tag">RARO</span>}
+                <img src={l.furniture?.sprite} alt="" onError={e => e.target.style.opacity = .2} />
+                <div className="nm">{l.furniture?.name}</div>
+                <div style={{ fontSize: 10, color: 'var(--hb-muted)' }}>@{l.seller?.github_login}</div>
+                <button className="hb-btn hb-btn-sm" style={{ width: '100%', marginTop: 4 }} onClick={() => buy(l)}>🪙 {l.price}</button>
+              </div>
+            ))}
+            {listings.length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Nenhum anúncio. Seja o primeiro a vender!</p>}
+          </div>
+        )}
+        {tab === 'sell' && (
+          <div className="furni-grid">
+            {inv.map(i => (
+              <div key={i.furniture_id} className="furni-cell" title={i.furniture?.name}>
+                <img src={i.furniture?.sprite} alt="" onError={e => e.target.style.opacity = .2} />
+                <div className="nm">{i.furniture?.name} x{i.qty}</div>
+                <input className="hb-input" style={{ padding: 4, fontSize: 12, margin: '4px 0' }} placeholder="🪙 preço" value={price[i.furniture_id] || ''} onChange={e => setPrice(p => ({ ...p, [i.furniture_id]: e.target.value }))} />
+                <button className="hb-btn hb-btn-sm" style={{ width: '100%' }} onClick={() => sell(i)}>Anunciar</button>
+              </div>
+            ))}
+            {inv.length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Mochila vazia.</p>}
+          </div>
+        )}
+        {tab === 'mine' && (
+          <div className="furni-grid">
+            {mine.filter(l => l.status === 'active').map(l => (
+              <div key={l.id} className="furni-cell">
+                <img src={l.furniture?.sprite} alt="" onError={e => e.target.style.opacity = .2} />
+                <div className="nm">{l.furniture?.name}</div><div className="pr">🪙 {l.price}</div>
+                <button className="hb-btn hb-btn-ghost hb-btn-sm" style={{ width: '100%', marginTop: 4 }} onClick={() => cancel(l)}>Cancelar</button>
+              </div>
+            ))}
+            {mine.filter(l => l.status === 'active').length === 0 && <p style={{ color: 'var(--hb-muted)' }}>Você não tem anúncios ativos.</p>}
+          </div>
+        )}
+        <p style={{ color: 'var(--hb-muted)', fontSize: 12, marginTop: 12 }}>💡 O hotel cobra 10% de taxa nas vendas.</p>
       </div>
     </div>
   );

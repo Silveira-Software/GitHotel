@@ -220,6 +220,112 @@ app.get('/rooms', async (_req, res) => {
   res.json({ official: official || [], user: user || [] });
 });
 
+async function profileByLogin(login) {
+  const { data } = await db.from('profiles').select('id, github_login, look, coins, banned').eq('github_login', login).maybeSingle();
+  return data;
+}
+async function profilesByIds(ids) {
+  if (!ids.length) return {};
+  const { data } = await db.from('profiles').select('id, github_login, look, coins').in('id', ids);
+  return Object.fromEntries((data || []).map(p => [p.id, p]));
+}
+
+// ---------- Amigos ----------
+app.get('/friends', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { data: acc } = await db.from('friendships').select('friend_id').eq('user_id', me.id).eq('status', 'accepted');
+  const { data: inc } = await db.from('friendships').select('user_id').eq('friend_id', me.id).eq('status', 'pending');
+  const { data: out } = await db.from('friendships').select('friend_id').eq('user_id', me.id).eq('status', 'pending');
+  const ids = [...(acc || []).map(r => r.friend_id), ...(inc || []).map(r => r.user_id), ...(out || []).map(r => r.friend_id)];
+  const pmap = await profilesByIds(ids);
+  res.json({
+    friends: (acc || []).map(r => pmap[r.friend_id]).filter(Boolean),
+    requests: (inc || []).map(r => pmap[r.user_id]).filter(Boolean),
+    pending: (out || []).map(r => pmap[r.friend_id]).filter(Boolean),
+  });
+});
+app.post('/friends/request', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const t = await profileByLogin(String((req.body || {}).login || '').trim());
+  if (!t || t.id === me.id) return res.json({ ok: false, error: 'not_found' });
+  await db.from('friendships').upsert({ user_id: me.id, friend_id: t.id, status: 'pending' }, { onConflict: 'user_id,friend_id', ignoreDuplicates: true });
+  io.to('user:' + t.github_login).emit('friend:request', { from: me.github_login });
+  res.json({ ok: true });
+});
+app.post('/friends/accept', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const t = await profileByLogin(String((req.body || {}).login || '').trim());
+  if (!t) return res.json({ ok: false });
+  await db.from('friendships').update({ status: 'accepted' }).eq('user_id', t.id).eq('friend_id', me.id);
+  await db.from('friendships').upsert({ user_id: me.id, friend_id: t.id, status: 'accepted' }, { onConflict: 'user_id,friend_id' });
+  io.to('user:' + t.github_login).emit('friend:accepted', { by: me.github_login });
+  res.json({ ok: true });
+});
+app.post('/friends/remove', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const t = await profileByLogin(String((req.body || {}).login || '').trim());
+  if (!t) return res.json({ ok: false });
+  await db.from('friendships').delete().or(`and(user_id.eq.${me.id},friend_id.eq.${t.id}),and(user_id.eq.${t.id},friend_id.eq.${me.id})`);
+  res.json({ ok: true });
+});
+
+// ---------- DMs ----------
+app.get('/dms/:login', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const t = await profileByLogin(req.params.login);
+  if (!t) return res.json([]);
+  const { data } = await db.from('dms')
+    .select('id, from_id, to_id, body, created_at')
+    .or(`and(from_id.eq.${me.id},to_id.eq.${t.id}),and(from_id.eq.${t.id},to_id.eq.${me.id})`)
+    .order('created_at').limit(100);
+  await db.from('dms').update({ read: true }).eq('from_id', t.id).eq('to_id', me.id).eq('read', false);
+  res.json((data || []).map(m => ({ ...m, mine: m.from_id === me.id })));
+});
+app.post('/dms', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { to, body } = req.body || {};
+  const t = await profileByLogin(String(to || '').trim());
+  const text = String(body || '').slice(0, 500).trim();
+  if (!t || !text) return res.json({ ok: false });
+  const { data } = await db.from('dms').insert({ from_id: me.id, to_id: t.id, body: text }).select('id, created_at').single();
+  io.to('user:' + t.github_login).emit('dm:new', { from: me.github_login, body: text, at: data?.created_at });
+  res.json({ ok: true });
+});
+app.get('/dms', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { count } = await db.from('dms').select('id', { count: 'exact', head: true }).eq('to_id', me.id).eq('read', false);
+  res.json({ unread: count || 0 });
+});
+
+// ---------- Marketplace ----------
+app.get('/market', async (_req, res) => {
+  const { data } = await db.from('market_listings')
+    .select('id, price, created_at, furniture_id, furniture(name, sprite, category, rare), seller:profiles!seller_id(github_login, look)')
+    .eq('status', 'active').order('created_at', { ascending: false }).limit(80);
+  res.json(data || []);
+});
+app.get('/market/mine', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { data } = await db.from('market_listings').select('id, price, status, furniture_id, furniture(name, sprite)').eq('seller_id', me.id).order('created_at', { ascending: false }).limit(50);
+  res.json(data || []);
+});
+app.post('/market/list', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { furniture_id, price } = req.body || {};
+  const { data } = await db.rpc('market_list', { p_seller: me.id, p_furni: furniture_id, p_price: parseInt(price) || 0 });
+  res.json(data);
+});
+app.post('/market/buy', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { data } = await db.rpc('market_buy', { p_buyer: me.id, p_listing: (req.body || {}).listing_id });
+  res.json(data);
+});
+app.post('/market/cancel', authMiddleware, async (req, res) => {
+  const me = await getOrCreateProfile(req.user);
+  const { data } = await db.rpc('market_cancel', { p_seller: me.id, p_listing: (req.body || {}).listing_id });
+  res.json(data);
+});
+
 // Quem esta online agora (presenca via sockets)
 let onlineCount = 0;
 app.get('/online', (_req, res) => res.json({ online: onlineCount }));
@@ -242,6 +348,7 @@ io.on('connection', async (socket) => {
   socket.data.login = profile.github_login;
   socket.data.look = profile.look || DEFAULT_LOOK;
   socket.data.dir = 2;
+  socket.join('user:' + profile.github_login);   // canal pessoal (DM/amigos)
   onlineCount++;
   io.emit('hotel:online', { online: onlineCount });
 
